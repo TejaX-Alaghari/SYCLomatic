@@ -111,6 +111,10 @@ const char *const CtHelpHint =
     "  To get help on the tool usage, run: dpct --help\n"
     "\n";
 
+const char *const CmakeScriptMigrationHelpHint =
+    "Warning: CMake build script file like CMakeLists.txt is not found, so no CMake build script file will be migrated.";
+
+
 static extrahelp CommonHelp(CtHelpMessage);
 
 static std::string SuppressWarningsMessage = "A comma separated list of migration warnings to suppress. Valid "
@@ -477,6 +481,21 @@ static void loadMainSrcFileInfo(clang::tooling::UnifiedPath OutRoot) {
   for (auto &Entry : PreTU->MainSourceFilesDigest) {
     MainSrcFilesHasCudaSyntex.insert(Entry.first);
   }
+
+  // Currently, when "--use-experimental-features=device_global" and
+  // "--use-experimental-features=all" are specified, the migrated code should
+  // be compiled with C++20 or later.
+  auto Iter = PreTU->OptionMap.find("ExperimentalFlag");
+  if (Iter != PreTU->OptionMap.end()) {
+    if (Iter->second.Specified) {
+      const std::string Value = Iter->second.Value;
+      unsigned int UValue = std::stoul(Value);
+      if (UValue & (1 << static_cast<unsigned>(
+                        ExperimentalFeatures::Exp_DeviceGlobal))) {
+        LANG_Cplusplus_20_Used = true;
+      }
+    }
+  }
 }
 
 int runDPCT(int argc, const char **argv) {
@@ -539,6 +558,7 @@ int runDPCT(int argc, const char **argv) {
 
   InRootPath = InRoot;
   OutRootPath = OutRoot;
+  std::string OutRootPathCUDACodepin = "";
   CudaIncludePath = CudaInclude;
   SDKPath = SDKPathOpt;
   std::transform(
@@ -591,6 +611,9 @@ int runDPCT(int argc, const char **argv) {
 #endif
   if (CodePinReport)
     CallIndependentTool("codepin-report.py");
+
+  if (AnalysisMode)
+    DpctGlobalInfo::enableAnalysisMode();
 
   if (InRootPath.getPath().size() >= MAX_PATH_LEN - 1) {
     DpctLog() << "Error: --in-root '" << InRootPath.getPath() << "' is too long\n";
@@ -729,8 +752,7 @@ int runDPCT(int argc, const char **argv) {
 #else
   std::string DVerbose = "";
 #endif
-  if (!DpctGlobalInfo::isAnalysisModeEnabled() &&
-      !checkReportArgs(ReportType.getValue(), ReportFormat.getValue(),
+  if (!checkReportArgs(ReportType.getValue(), ReportFormat.getValue(),
                        ReportFilePrefix, ReportOnly, GenReport, DVerbose)) {
     ShowStatus(MigrationErrorInvalidReportArgs);
     dpctExit(MigrationErrorInvalidReportArgs);
@@ -833,6 +855,8 @@ int runDPCT(int argc, const char **argv) {
                 ExperimentalFeatures::Exp_MaskedSubGroupFunction);
           else if (Option.ends_with("bindless_images"))
             Experimentals.addValue(ExperimentalFeatures::Exp_BindlessImages);
+          else if (Option.ends_with("graph"))
+            Experimentals.addValue(ExperimentalFeatures::Exp_Graph);
         } else if (Option == "--no-dry-pattern") {
           NoDRYPattern.setValue(true);
         }
@@ -865,6 +889,12 @@ int runDPCT(int argc, const char **argv) {
     }
 
     Tool.appendArgumentsAdjuster(getInsertArgumentAdjuster("-w"));
+#ifdef _WIN32 // Avoid some error on windows platform.
+    if (DpctGlobalInfo::getSDKVersion() <= CudaVersion::CUDA_100) {
+      Tool.appendArgumentsAdjuster(
+          getInsertArgumentAdjuster("-D_MSC_VER=1900"));
+    }
+#endif
     NoIncrementalMigration.setValue(true);
     StopOnParseErr.setValue(true);
     Tool.setPrintErrorMessage(false);
@@ -877,6 +907,11 @@ int runDPCT(int argc, const char **argv) {
       ShowStatus(MigrationErrorInvalidInRootOrOutRoot);
       dpctExit(MigrationErrorInvalidInRootOrOutRoot, false);
     }
+    if (EnableCodePin) {
+      OutRootPathCUDACodepin =  OutRootPath.getPath().str()  + "_codepin_cuda";
+      OutRootPath = OutRootPath.getPath().str() + "_codepin_sycl";
+    }
+
     dpct::DpctGlobalInfo::setOutRoot(OutRootPath);
   }
 
@@ -922,6 +957,11 @@ int runDPCT(int argc, const char **argv) {
     Tool.appendArgumentsAdjuster(getInsertArgumentAdjuster(
         CUDAVerMinor.c_str(), ArgumentInsertPosition::BEGIN));
   }
+  std::string CUDADotHFilePathMacro =
+      "-D__CUDA_DOT_H_FILE_PATH__=\"" +
+      appendPath(CudaPath.getCanonicalPath().str(), "cuda.h") + "\"";
+  Tool.appendArgumentsAdjuster(getInsertArgumentAdjuster(
+      CUDADotHFilePathMacro.c_str(), ArgumentInsertPosition::BEGIN));
 
   Tool.appendArgumentsAdjuster(getInsertArgumentAdjuster(
       "-fno-delayed-template-parsing", ArgumentInsertPosition::END));
@@ -1108,6 +1148,10 @@ int runDPCT(int argc, const char **argv) {
     loadMainSrcFileInfo(OutRootPath);
     collectCmakeScriptsSpecified(OptParser, InRootPath, OutRootPath);
     doCmakeScriptMigration(InRootPath, OutRootPath);
+
+    if (cmakeScriptNotFound()) {
+      std::cout << CmakeScriptMigrationHelpHint << "\n";
+    }
     ShowStatus(MigrationCmakeScriptCompleted);
     return MigrationSucceeded;
   }
@@ -1254,14 +1298,17 @@ int runDPCT(int argc, const char **argv) {
       return MigrationSucceeded;
     }
   }
-
   // if run was successful
-  int Status = saveNewFiles(Tool, InRootPath, OutRootPath, ReplCUDA, ReplSYCL);
+  int Status = saveNewFiles(Tool, InRootPath, OutRootPath, OutRootPathCUDACodepin, ReplCUDA, ReplSYCL);
 
   if (DpctGlobalInfo::getBuildScript() == BuildScriptKind::BS_Cmake) {
     loadMainSrcFileInfo(OutRootPath);
     collectCmakeScripts(InRootPath, OutRootPath);
     doCmakeScriptMigration(InRootPath, OutRootPath);
+
+    if (cmakeScriptNotFound()) {
+      std::cout << CmakeScriptMigrationHelpHint << "\n";
+    }
   }
 
   ShowStatus(Status);

@@ -35,6 +35,15 @@
 #endif
 #endif
 
+// Helper for enabling empty-base optimizations on MSVC.
+// TODO: Remove this when MSVC has this optimization enabled by default.
+#ifdef _MSC_VER
+#define __SYCL_EBO __declspec(empty_bases)
+#else
+#define __SYCL_EBO
+#endif
+
+
 #ifndef __SYCL_ID_QUERIES_FIT_IN_INT__
 #define __SYCL_ID_QUERIES_FIT_IN_INT__ 0
 #endif
@@ -80,6 +89,13 @@
 
 static_assert(__cplusplus >= 201703L,
               "DPCPP does not support C++ version earlier than C++17.");
+
+// Helper macro to identify if fallback assert is needed
+#if defined(SYCL_FALLBACK_ASSERT)
+#define __SYCL_USE_FALLBACK_ASSERT SYCL_FALLBACK_ASSERT
+#else
+#define __SYCL_USE_FALLBACK_ASSERT 0
+#endif
 
 #if defined(_WIN32) && !defined(_DLL) && !defined(__SYCL_DEVICE_ONLY__)
 // SYCL library is designed such a way that STL objects cross DLL boundary,

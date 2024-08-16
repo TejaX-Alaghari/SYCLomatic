@@ -10,31 +10,31 @@
 #include <detail/kernel_bundle_impl.hpp>
 #include <detail/kernel_impl.hpp>
 #include <sycl/detail/export.hpp>
-#include <sycl/detail/pi.h>
+#include <sycl/detail/ur.hpp>
 #include <sycl/kernel.hpp>
 
 namespace sycl {
 inline namespace _V1 {
 
-kernel::kernel(cl_kernel ClKernel, const context &SyclContext)
-    : impl(std::make_shared<detail::kernel_impl>(
-          detail::pi::cast<sycl::detail::pi::PiKernel>(ClKernel),
-          detail::getSyclObjImpl(SyclContext), nullptr, nullptr)) {
+// TODO(pi2ur): Don't cast straight from cl_kernel below
+kernel::kernel(cl_kernel ClKernel, const context &SyclContext) {
+  auto Plugin = sycl::detail::ur::getPlugin<backend::opencl>();
+  ur_kernel_handle_t hKernel = nullptr;
+  ur_native_handle_t nativeHandle =
+      reinterpret_cast<ur_native_handle_t>(ClKernel);
+  Plugin->call(urKernelCreateWithNativeHandle, nativeHandle,
+               detail::getSyclObjImpl(SyclContext)->getHandleRef(), nullptr,
+               nullptr, &hKernel);
+  impl = std::make_shared<detail::kernel_impl>(
+      hKernel, detail::getSyclObjImpl(SyclContext), nullptr, nullptr);
   // This is a special interop constructor for OpenCL, so the kernel must be
   // retained.
   if (get_backend() == backend::opencl) {
-    impl->getPlugin()->call<detail::PiApiKind::piKernelRetain>(
-        detail::pi::cast<sycl::detail::pi::PiKernel>(ClKernel));
+    impl->getPlugin()->call(urKernelRetain, hKernel);
   }
 }
 
 cl_kernel kernel::get() const { return impl->get(); }
-
-bool kernel::is_host() const {
-  bool IsHost = impl->is_host();
-  assert(!IsHost && "kernel::is_host should not be called in implementation.");
-  return IsHost;
-}
 
 context kernel::get_context() const {
   return impl->get_info<info::kernel::context>();
@@ -50,25 +50,29 @@ kernel::get_kernel_bundle() const {
 
 template <typename Param>
 detail::ABINeutralT_t<typename detail::is_kernel_info_desc<Param>::return_type>
-#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
 kernel::get_info_impl() const {
-#else
-kernel::get_info() const {
-#endif
   return detail::convert_to_abi_neutral(impl->template get_info<Param>());
 }
 
-#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
 #define __SYCL_PARAM_TRAITS_SPEC(DescType, Desc, ReturnT, PiCode)              \
   template __SYCL_EXPORT detail::ABINeutralT_t<ReturnT>                        \
   kernel::get_info_impl<info::kernel::Desc>() const;
-#else
-#define __SYCL_PARAM_TRAITS_SPEC(DescType, Desc, ReturnT, PiCode)              \
-  template __SYCL_EXPORT detail::ABINeutralT_t<ReturnT>                        \
-  kernel::get_info<info::kernel::Desc>() const;
-#endif
 
 #include <sycl/info/kernel_traits.def>
+
+#undef __SYCL_PARAM_TRAITS_SPEC
+
+template <typename Param>
+typename detail::is_backend_info_desc<Param>::return_type
+kernel::get_backend_info() const {
+  return impl->get_backend_info<Param>();
+}
+
+#define __SYCL_PARAM_TRAITS_SPEC(DescType, Desc, ReturnT, Picode)              \
+  template __SYCL_EXPORT ReturnT                                               \
+  kernel::get_backend_info<info::DescType::Desc>() const;
+
+#include <sycl/info/sycl_backend_traits.def>
 
 #undef __SYCL_PARAM_TRAITS_SPEC
 
@@ -115,9 +119,9 @@ template __SYCL_EXPORT typename ext::oneapi::experimental::info::
 
 kernel::kernel(std::shared_ptr<detail::kernel_impl> Impl) : impl(Impl) {}
 
-pi_native_handle kernel::getNative() const { return impl->getNative(); }
+ur_native_handle_t kernel::getNative() const { return impl->getNative(); }
 
-pi_native_handle kernel::getNativeImpl() const { return impl->getNative(); }
+ur_native_handle_t kernel::getNativeImpl() const { return impl->getNative(); }
 
 } // namespace _V1
 } // namespace sycl

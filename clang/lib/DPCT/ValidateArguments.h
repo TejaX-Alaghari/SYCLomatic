@@ -88,6 +88,7 @@ enum class ExperimentalFeatures : unsigned int {
   Exp_Matrix,
   Exp_BFloat16Math,
   Exp_BindlessImages,
+  Exp_Graph,
   Exp_NonUniformGroups,
   Exp_DeviceGlobal,
   Exp_ExperimentalFeaturesEnumSize,
@@ -97,9 +98,11 @@ enum class HelperFuncPreference : unsigned int { NoQueueDevice = 0 };
 enum class SYCLFileExtensionEnum { DP_CPP, SYCL_CPP, CPP };
 
 bool makeInRootCanonicalOrSetDefaults(
-    clang::tooling::UnifiedPath &InRoot, const std::vector<std::string> SourceFiles);
-bool makeAnalysisScopeCanonicalOrSetDefaults(clang::tooling::UnifiedPath &AnalysisScope,
-                                             const clang::tooling::UnifiedPath &InRoot);
+    clang::tooling::UnifiedPath &InRoot,
+    const std::vector<std::string> SourceFiles);
+bool makeAnalysisScopeCanonicalOrSetDefaults(
+    clang::tooling::UnifiedPath &AnalysisScope,
+    const clang::tooling::UnifiedPath &InRoot);
 bool getDefaultOutRoot(clang::tooling::UnifiedPath &OutRootPar,
                        bool NeedCheckOutRootEmpty = true);
 /// Make sure files passed to tool are under the

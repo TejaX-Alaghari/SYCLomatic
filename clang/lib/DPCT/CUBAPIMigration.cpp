@@ -12,14 +12,23 @@
 #include "CallExprRewriter.h"
 #include "ExprAnalysis.h"
 #include "MigrationRuleManager.h"
+#include "TextModification.h"
+#include "Utility.h"
+#include "clang/AST/Attrs.inc"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
+#include "clang/AST/OperationKinds.h"
+#include "clang/AST/PrettyPrinter.h"
 #include "clang/AST/Stmt.h"
+#include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/ASTMatchers/ASTMatchFinder.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Analysis/AnalysisDeclContext.h"
+#include "clang/Basic/AttrKinds.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Tooling/Tooling.h"
@@ -31,7 +40,11 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
+#include <cstdlib>
 #include <iterator>
+#include <memory>
+#include <optional>
+#include <vector>
 
 using namespace clang;
 using namespace dpct;
@@ -56,14 +69,14 @@ auto isDeviceFuncCallExpr = []() {
         "If", "StableSortKeys", "StableSortKeysDescending", "StableSortPairs",
         "StableSortPairsDescending", "NonTrivialRuns", "HistogramEven",
         "MultiHistogramEven", "HistogramRange", "MultiHistogramRange",
-        "SortKeysCopy", "StableSortKeys");
+        "SortKeysCopy", "StableSortKeys", "CsrMV");
   };
   auto hasDeviceRecordName = []() {
     return hasAnyName("DeviceSegmentedReduce", "DeviceReduce", "DeviceScan",
                       "DeviceSelect", "DeviceRunLengthEncode",
                       "DeviceRadixSort", "DeviceSegmentedRadixSort",
                       "DeviceSegmentedSort", "DeviceHistogram",
-                      "DeviceMergeSort", "DevicePartition");
+                      "DeviceMergeSort", "DevicePartition", "DeviceSpmv");
   };
   return callExpr(callee(functionDecl(allOf(
       hasDeviceFuncName(),
@@ -86,7 +99,7 @@ void CubTypeRule::registerMatcher(ast_matchers::MatchFinder &MF) {
         "cub::KeyValuePair", "cub::CountingInputIterator",
         "cub::TransformInputIterator", "cub::ConstantInputIterator",
         "cub::ArgIndexInputIterator", "cub::DiscardOutputIterator",
-        "cub::DoubleBuffer", "cub::NullType");
+        "cub::DoubleBuffer", "cub::NullType", "cub::ArgMax", "cub::ArgMin");
   };
 
   MF.addMatcher(
@@ -178,7 +191,9 @@ void CubIntrinsicRule::registerMatcher(ast_matchers::MatchFinder &MF) {
               hasAnyName("IADD3", "SHR_ADD", "SHL_ADD", "BFE", "BFI", "LaneId",
                          "WarpId", "SyncStream", "CurrentDevice", "DeviceCount",
                          "DeviceCountUncached", "DeviceCountCachedValue",
-                         "PtxVersion", "PtxVersionUncached"),
+                         "PtxVersion", "PtxVersionUncached", "SmVersion",
+                         "SmVersionUncached", "RowMajorTid",
+                         "LoadDirectBlocked", "LoadDirectStriped"),
               hasAncestor(namespaceDecl(hasName("cub")))))))
           .bind("IntrinsicCall"),
       this);
@@ -850,6 +865,27 @@ void CubRule::processThreadLevelFuncCall(const CallExpr *CE,
   }
 }
 
+static std::string GetFunctionName(const CallExpr *CE) {
+  std::string s;
+  llvm::raw_string_ostream OS(s);
+  if (isa<CXXMemberCallExpr>(CE)) {
+    CE->getDirectCallee()->getNameForDiagnostic(
+      OS, DpctGlobalInfo::getContext().getLangOpts(), /*Qualified=*/true);
+  } else {
+    OS << "cub::" << CE->getDirectCallee()->getName();
+  }
+
+  OS << '(';
+  for (unsigned I = 0, E = CE->getNumArgs(); I != E; ++I) {
+    auto *Arg = CE->getArg(I);
+    Arg->getType().print(OS, DpctGlobalInfo::getContext().getLangOpts());
+    if (I < E - 1)
+      OS << ", ";
+  }
+  OS << ')';
+  return s;
+}
+
 void CubRule::processWarpLevelFuncCall(const CallExpr *CE, bool FuncCallUsed) {
   std::string Repl;
   size_t WarpSize = 32;
@@ -882,7 +918,7 @@ void CubRule::processWarpLevelFuncCall(const CallExpr *CE, bool FuncCallUsed) {
       }
     } else {
       report(CE->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-             "cub::" + FuncName);
+             GetFunctionName(CE));
     }
   }
 }
@@ -959,7 +995,7 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
             IsReferenceOutput = true;
           } else {
             report(BlockMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-                   "cub::" + FuncName);
+                   GetFunctionName(BlockMC));
             return;
           }
         } else {
@@ -1004,7 +1040,7 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
                                                      HT_DPCT_DPL_Utils);
         } else {
           report(BlockMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-                 "cub::" + FuncName);
+                 GetFunctionName(BlockMC));
           return;
         }
       }
@@ -1032,7 +1068,7 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
                 ->getType()
                 ->isLValueReferenceType()) {
           report(BlockMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-                 "cub::" + FuncName);
+                 GetFunctionName(BlockMC));
           return;
         }
         GroupOrWorkitem = DpctGlobalInfo::getItem(BlockMC);
@@ -1086,7 +1122,7 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
                                                      HT_DPCT_DPL_Utils);
         } else {
           report(BlockMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-                 "cub::" + FuncName);
+                 GetFunctionName(BlockMC));
           return;
         }
       }
@@ -1114,7 +1150,7 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
                 ->getType()
                 ->isLValueReferenceType()) {
           report(BlockMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-                 "cub::" + FuncName);
+                 GetFunctionName(BlockMC));
           return;
         }
         GroupOrWorkitem = DpctGlobalInfo::getItem(BlockMC);
@@ -1128,7 +1164,7 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
       }
     } else {
       report(BlockMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-             "cub::" + FuncName);
+             GetFunctionName(BlockMC));
       return;
     }
     if (IsReferenceOutput) {
@@ -1160,15 +1196,110 @@ void CubRule::processBlockLevelMemberCall(const CXXMemberCallExpr *BlockMC) {
     ExprAnalysis InEA(InData);
     bool IsPartialReduce = false;
     unsigned ValidItemParamIdx = 0;
-    if (FuncName == "Reduce" && NumArgs == 2) {
+    if (FuncName == "Reduce") {
       OpRepl = getOpRepl(FuncArgs[1]);
+      IsPartialReduce = NumArgs == 3;
+      ValidItemParamIdx = 2;
+      const auto *CK = dyn_cast<ImplicitCastExpr>(FuncArgs[1]);
+      if (DpctGlobalInfo::useUserDefineReductions() && OpRepl.empty() && CK &&
+          CK->getCastKind() == CK_FunctionToPointerDecay) {
+        ExprAnalysis EA;
+        EA.analyze(CK);
+        OpRepl =
+            "[](auto&& x, auto&& y) { return " + EA.getReplacedString() +
+            "(std::forward<decltype(x)>(x), std::forward<decltype(y)>(y)); }";
+
+        NewFuncName = MapNames::getClNamespace() +
+                      "ext::oneapi::experimental::reduce_over_group";
+        Expr *Obj = BlockMC->getImplicitObjectArgument();
+        const VarDecl *TempStorage = nullptr;
+
+        auto FindTempStorageVarInCtor = [&](const Expr *E) -> const VarDecl * {
+          if (auto *Ctor = dyn_cast<CXXConstructExpr>(E)) {
+            if (auto *DRE = dyn_cast<DeclRefExpr>(Ctor->getArg(0))) {
+              if (auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+                if (VD->hasAttr<CUDASharedAttr>() && isCubVar(VD)) {
+                  return VD;
+                }
+              }
+            }
+          }
+          return nullptr;
+        };
+
+        auto HandleTypeLoc = [&](TypeLoc Loc) -> TypeLoc {
+          if (Loc.isNull())
+            return Loc;
+          while (true) {
+            switch (Loc.getTypeLocClass()) {
+            case TypeLoc::Elaborated:
+              Loc = Loc.getNextTypeLoc();
+              break;
+            case TypeLoc::Typedef: {
+              auto NewLoc = Loc.castAs<TypedefTypeLoc>();
+              Loc = NewLoc.getTypedefNameDecl()
+                        ->getTypeSourceInfo()
+                        ->getTypeLoc();
+              break;
+            }
+            case TypeLoc::TemplateSpecialization: {
+              auto NewLoc = Loc.getAs<TemplateSpecializationTypeLoc>();
+              return NewLoc.getArgLocInfo(0).getAsTypeSourceInfo()->getTypeLoc();
+              break;
+            }
+            default:
+              return Loc;
+            }
+          }
+        };
+
+        TypeLoc DataTypeLoc;
+        if (const auto *MTE = dyn_cast<MaterializeTemporaryExpr>(Obj)) {
+          if (auto *TOE = dyn_cast<CXXTemporaryObjectExpr>(MTE->getSubExpr())) {
+            DataTypeLoc = HandleTypeLoc(TOE->getTypeSourceInfo()->getTypeLoc());
+          } else if (auto *FC =
+                         dyn_cast<CXXFunctionalCastExpr>(MTE->getSubExpr())) {
+            DataTypeLoc =
+                HandleTypeLoc(FC->getTypeInfoAsWritten()->getTypeLoc());
+          }
+          TempStorage =
+              FindTempStorageVarInCtor(MTE->getSubExpr()->IgnoreCasts());
+        } else if (const auto *DRE = dyn_cast<DeclRefExpr>(Obj)) {
+          if (const auto *VD = dyn_cast<VarDecl>(DRE->getDecl())) {
+            DataTypeLoc = HandleTypeLoc(VD->getTypeSourceInfo()->getTypeLoc());
+            if (isCubCollectiveRecordType(VD->getType()) && VD->hasInit()) {
+              emplaceTransformation(new ReplaceVarDecl(VD, ""));
+              TempStorage = FindTempStorageVarInCtor(VD->getInit());
+            }
+          }
+        }
+
+        auto *FD = DpctGlobalInfo::findAncestor<FunctionDecl>(TempStorage);
+        if (!FD || !TempStorage || DataTypeLoc.isNull())
+          return;
+        if (auto FuncInfo = DeviceFunctionDecl::LinkRedecls(FD)) {
+          auto LocInfo = DpctGlobalInfo::getLocInfo(TempStorage);
+          ExprAnalysis EA;
+          EA.analyze(DataTypeLoc);
+          FuncInfo->getVarMap().addCUBTempStorage(
+              std::make_shared<TempStorageVarInfo>(
+                  LocInfo.second, TempStorage->getName(),
+                  EA.getTemplateDependentStringInfo()));
+        }
+        std::string Span = MapNames::getClNamespace() + "span<std::byte, 1>" +
+                           "(&" + TempStorage->getNameAsString() + "[0], " +
+                           TempStorage->getNameAsString() + ".size())";
+        GroupOrWorkitem = MapNames::getClNamespace() +
+                          "ext::oneapi::experimental::group_with_scratchpad(" +
+                          GroupOrWorkitem + ", " + Span + ")";
+      }
     } else if (FuncName == "Sum") {
       OpRepl = getOpRepl(nullptr);
       IsPartialReduce = NumArgs == 2;
       ValidItemParamIdx = 1;
     } else {
       report(BlockMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-             "cub::" + FuncName);
+             GetFunctionName(BlockMC));
       return;
     }
     std::string In;
@@ -1245,7 +1376,7 @@ void CubRule::processWarpLevelMemberCall(const CXXMemberCallExpr *WarpMC) {
         OpRepl = getOpRepl(FuncArgs[3]);
       } else {
         report(WarpMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-               "cub::" + FuncName);
+               GetFunctionName(WarpMC));
         return;
       }
       NewFuncName = "exclusive_scan_over_group";
@@ -1260,7 +1391,7 @@ void CubRule::processWarpLevelMemberCall(const CXXMemberCallExpr *WarpMC) {
       NewFuncName = "inclusive_scan_over_group";
     } else {
       report(WarpMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-             "cub::" + FuncName);
+             GetFunctionName(WarpMC));
       return;
     }
     ExprAnalysis InEA(InData);
@@ -1306,7 +1437,7 @@ void CubRule::processWarpLevelMemberCall(const CXXMemberCallExpr *WarpMC) {
     }
     default:
       report(WarpMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-             "cub::" + FuncName);
+             GetFunctionName(WarpMC));
       return;
     }
     emplaceTransformation(new ReplaceStmt(WarpMC, Repl));
@@ -1332,7 +1463,7 @@ void CubRule::processWarpLevelMemberCall(const CXXMemberCallExpr *WarpMC) {
              ", " + OpRepl + ")";
     } else {
       report(WarpMC->getBeginLoc(), Diagnostics::API_NOT_MIGRATED, false,
-             "cub::" + FuncName);
+             GetFunctionName(WarpMC));
       return;
     }
     emplaceTransformation(new ReplaceStmt(WarpMC, Repl));

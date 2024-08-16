@@ -58,7 +58,7 @@ public:
 #define CALL(x) x;
 
 #define EMPTY_MACRO(x) x
-//CHECK:#define GET_MEMBER_MACRO(x) x[1] = 5
+//CHECK:#define GET_MEMBER_MACRO(x) x.y = 5
 #define GET_MEMBER_MACRO(x) x.y = 5
 
 __global__ void foo_kernel() {}
@@ -99,9 +99,9 @@ void foo() {
 #endif
 
 
-  // CHECK: (*d3.A)[2] = 3;
-  // CHECK-NEXT: d3.B[2] = 2;
-  // CHECK-NEXT: EMPTY_MACRO(d3.B[2]);
+  // CHECK: d3.A->x = 3;
+  // CHECK-NEXT: d3.B.x = 2;
+  // CHECK-NEXT: EMPTY_MACRO(d3.B.x);
   // CHECK-NEXT: GET_MEMBER_MACRO(d3.B);
   d3.A->x = 3;
   d3.B.x = 2;
@@ -233,8 +233,8 @@ MACRO_KC
 
 //CHECK: #define HARD_KC(NAME, a, b, c, d)                                              \
 //CHECK-NEXT:   q_ct1.submit([&](sycl::handler &cgh) {                                       \
-//CHECK-NEXT:     int c_ct0 = c;                                                            \
-//CHECK-NEXT:     int d_ct1 = d;                                                            \
+//CHECK-NEXT:     auto c_ct0 = c;                                                            \
+//CHECK-NEXT:     auto d_ct1 = d;                                                            \
 //CHECK:     cgh.parallel_for(                                                          \
 //CHECK-NEXT:         sycl::nd_range<3>(sycl::range<3>(1, 1, a) * sycl::range<3>(1, 1, b),   \
 //CHECK-NEXT:                           sycl::range<3>(1, 1, b)),                            \
@@ -251,8 +251,8 @@ HARD_KC(foo3,3,2,1,0)
 
 //CHECK: #define MACRO_KC2(a, b, c, d)                                                       \
 //CHECK-NEXT:   q_ct1.submit([&](sycl::handler &cgh) {                                       \
-//CHECK-NEXT:     int c_ct0 = c;                                                            \
-//CHECK-NEXT:     int d_ct1 = d;                                                            \
+//CHECK-NEXT:     auto c_ct0 = c;                                                            \
+//CHECK-NEXT:     auto d_ct1 = d;                                                            \
 //CHECK-NEXT:                                                                                \
 //CHECK-NEXT:     cgh.parallel_for(sycl::nd_range<3>(a * b, b),                  \
 //CHECK-NEXT:                      [=](sycl::nd_item<3> item_ct1) { foo3(c_ct0, d_ct1); });  \
@@ -268,7 +268,7 @@ MACRO_KC2(griddim,threaddim,1,0)
 // CHECK: MACRO_KC2(3,2,1,0)
 MACRO_KC2(3,2,1,0)
 
-// CHECK: MACRO_KC2(sycl::range<3>(5, 4, 3), 2, 1, 0)
+// CHECK: MACRO_KC2(dpct::dim3(5, 4, 3), 2, 1, 0)
 MACRO_KC2(dim3(5,4,3),2,1,0)
 
 int *a;
@@ -371,17 +371,17 @@ void bar() {
 #define AAA int *a
 #define BBB int *BB
 
-// CHECK: #define CCC AAA, float *sp_lj, float *sp_coul, int *ljd, sycl::local_accessor<double, 2> la, int *b=0
+// CHECK: #define CCC AAA, float *sp_lj, float *sp_coul, int *ljd, double la[8][1], int *b=0
 // CHECK-NEXT: #define CC AAA, BBB
 #define CCC AAA, int *b=0
 #define CC AAA, BBB
 
 // CHECK: #define CCCC(x) void fooc(x)
-// CHECK-NEXT: #define CCCCC(x) void foocc(x, float *sp_lj, float *sp_coul, int *ljd, sycl::local_accessor<double, 2> la)
+// CHECK-NEXT: #define CCCCC(x) void foocc(x, float *sp_lj, float *sp_coul, int *ljd, double la[8][1])
 #define CCCC(x) __device__ void fooc(x)
 #define CCCCC(x) __device__ void foocc(x)
 
-// CHECK: #define XX(x) void foox(x, float *sp_lj, float *sp_coul, int *ljd, sycl::local_accessor<double, 2> la)
+// CHECK: #define XX(x) void foox(x, float *sp_lj, float *sp_coul, int *ljd, double la[8][1])
 // CHECK-NEXT: #define FF XX(CC)
 #define XX(x) __device__ void foox(x)
 #define FF XX(CC)
@@ -420,7 +420,7 @@ CCCC(CCC)
   __shared__ double la[8][1];
 }
 
-// CHECK: #define FFF void foo(AAA, BBB, float *sp_lj, float *sp_coul, int *ljd, sycl::local_accessor<double, 2> la)
+// CHECK: #define FFF void foo(AAA, BBB, float *sp_lj, float *sp_coul, int *ljd, double la[8][1])
 #define FFF __device__ void foo(AAA, BBB)
 
 // CHECK: FFF
@@ -435,7 +435,7 @@ FFF
 
 }
 
-// CHECK: #define FFFFF(aaa,bbb) void foo4(const int * __restrict__ aaa, const float * __restrict__ bbb, int *c, BBB, const sycl::nd_item<3> &item_ct1, float *sp_lj, float *sp_coul, int *ljd, sycl::local_accessor<double, 2> la)
+// CHECK: #define FFFFF(aaa,bbb) void foo4(const int * __restrict__ aaa, const float * __restrict__ bbb, int *c, BBB, const sycl::nd_item<3> &item_ct1, float *sp_lj, float *sp_coul, int *ljd, double la[8][1])
 #define FFFFF(aaa,bbb) __device__ void foo4(const int * __restrict__ aaa, const float * __restrict__ bbb, int *c, BBB)
 
 // CHECK: FFFFF(pos, q)
@@ -452,7 +452,7 @@ FFFFF(pos, q)
   const int tid = threadIdx.x;
 }
 
-// CHECK: #define FFFFFF(aaa,bbb) void foo5(const int * __restrict__ aaa, const float * __restrict__ bbb, const sycl::nd_item<3> &item_ct1, float *sp_lj, float *sp_coul, int *ljd, sycl::local_accessor<double, 2> la)
+// CHECK: #define FFFFFF(aaa,bbb) void foo5(const int * __restrict__ aaa, const float * __restrict__ bbb, const sycl::nd_item<3> &item_ct1, float *sp_lj, float *sp_coul, int *ljd, double la[8][1])
 #define FFFFFF(aaa,bbb) __device__ void foo5(const int * __restrict__ aaa, const float * __restrict__ bbb)
 
 // CHECK: FFFFFF(pos, q)
@@ -469,8 +469,7 @@ FFFFFF(pos, q)
   const int tid = threadIdx.x;
 }
 
-// CHECK: void foo6(AAA, BBB, float *sp_lj, float *sp_coul, int *ljd,
-// CHECK-NEXT:   sycl::local_accessor<double, 2> la)
+// CHECK: void foo6(AAA, BBB, float *sp_lj, float *sp_coul, int *ljd, double la[8][1])
 // CHECK-NEXT: {
 // CHECK-NEXT: }
 __device__ void foo6(AAA, BBB)
@@ -1086,7 +1085,7 @@ void foo28(){
 #define local_allocate_store_charge()                                       \
     __shared__ double red_acc[8][BLOCK_PAIR / SIMD_SIZE];
 
-//CHECK: void foo29(sycl::local_accessor<double, 2> red_acc) {
+//CHECK: void foo29(double red_acc[8][8/*BLOCK_PAIR / SIMD_SIZE*/]) {
 //CHECK-NEXT: }
 __global__ void foo29() {
   local_allocate_store_charge();
@@ -1111,8 +1110,8 @@ template<class T1, class T2, int N> __global__ void foo31();
 //CHECK-NEXT:     value. Modify the code to use the original expression, provided in
 //CHECK-NEXT:     comments, if it is correct.
 //CHECK-NEXT:     */
-//CHECK-NEXT:     sycl::local_accessor<double, 2> red_acc_acc_ct1(
-//CHECK-NEXT:         sycl::range<2>(8, 8 /*BLOCK_PAIR / SIMD_SIZE*/), cgh);
+//CHECK-NEXT:     sycl::local_accessor<double[8][8 /*BLOCK_PAIR / SIMD_SIZE*/], 0>
+//CHECK-NEXT:         red_acc_acc_ct1(cgh);
 
 //CHECK:     cgh.parallel_for(
 //CHECK-NEXT:         sycl::nd_range<3>(sycl::range<3>(1, 1, 1), sycl::range<3>(1, 1, 1)),
@@ -1161,7 +1160,7 @@ class ArgClass{};
 //CHECK-NEXT: #define VACALL2(...) VACALL3(__VA_ARGS__)
 //CHECK-NEXT: #define VACALL(x)                                                              \
 //CHECK-NEXT:   dpct::get_in_order_queue().submit([&](sycl::handler &cgh) {                   \
-//CHECK-NEXT:     int i_ct0 = i;                                                            \
+//CHECK-NEXT:     auto i_ct0 = i;                                                            \
 //CHECK-NEXT:     auto ac_ct0 = ac;                                                          \
 //CHECK:     cgh.parallel_for(                                                          \
 //CHECK-NEXT:         sycl::nd_range<3>(sycl::range<3>(1, 1, 2) *                            \
@@ -1328,16 +1327,60 @@ void foo38() {
   int z;
   int shared;
   cudaStream_t stream;
-  //     CHECK:stream->parallel_for(
-  //CHECK-NEXT:    sycl::nd_range<3>(sycl::range<3>(z, y, x) * sycl::range<3>(1, 1, block),
-  //CHECK-NEXT:                      sycl::range<3>(1, 1, block)),
-  //CHECK-NEXT:    [=](sycl::nd_item<3> item_ct1) {
-  //CHECK-NEXT:      ((void *)&kernel38<T>)();
-  //CHECK-NEXT:    });
-  //CHECK-NEXT:CHECK_1(0);
+  //CHECK:CHECK_1([&]() {
+  //CHECK-NEXT: stream->parallel_for(
+  //CHECK-NEXT: sycl::nd_range<3>(sycl::range<3>(z, y, x) * sycl::range<3>(1, 1, block),
+  //CHECK-NEXT:                   sycl::range<3>(1, 1, block)),
+  //CHECK-NEXT: [=](sycl::nd_item<3> item_ct1) {
+  //CHECK-NEXT:   ((void *)&kernel38<T>)();
+  //CHECK-NEXT: });
+  //CHECK-NEXT: return 0;
+  //CHECK-NEXT: }());
   CHECK_1(cudaLaunchKernel((void*)&kernel38<T>, dim3(x, y, z), block, args, shared, stream));
+  //CHECK:dpct::err0 status = [&]() {
+  //CHECK-NEXT:   stream->parallel_for(
+  //CHECK-NEXT:       sycl::nd_range<3>(sycl::range<3>(z, y, x) * sycl::range<3>(1, 1, block),
+  //CHECK-NEXT:                         sycl::range<3>(1, 1, block)),
+  //CHECK-NEXT:       [=](sycl::nd_item<3> item_ct1) {
+  //CHECK-NEXT:         ((void *)&kernel38<T>)();
+  //CHECK-NEXT:       });
+  //CHECK-NEXT:   return 0;
+  //CHECK-NEXT: }();
+  cudaError_t status = cudaLaunchKernel((void*)&kernel38<T>, dim3(x, y, z), block, args, shared, stream);
 }
 #undef CHECK_1
 #undef CHECK_2
 
+template<typename T>
+void foo38(T *t);
+
+//CHECK: #define GRID grid.x = 3;
+#define GRID grid.x = 3;
+
+template<typename T>
+void foo38(T *t)
+{
+    dim3 grid;
+    GRID
+}
+
+template void foo38(int *);
+
+#define FORCE_TYPE long long int
+
+//CHECK: #define CALL(X, Y)                                                             \
+//CHECK:   dpct::get_in_order_queue().parallel_for(                                     \
+//CHECK:       sycl::nd_range<3>(sycl::range<3>(1, 1, 1), sycl::range<3>(1, 1, 1)),     \
+//CHECK:       [=](sycl::nd_item<3> item_ct1) { kernel2<FORCE_TYPE, X, Y>(); });
+#define CALL(X, Y) kernel2<FORCE_TYPE, X, Y><<<1, 1>>>();
+
+template<typename T, int T1, int T2>
+__global__ void kernel2(){
+
+}
+
+int foo39() {
+  CALL(0, 1)
+  return 0;
+}
 #endif

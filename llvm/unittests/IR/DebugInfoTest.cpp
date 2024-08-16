@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/IR/DebugInfo.h"
+#include "../lib/IR/LLVMContextImpl.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/DIBuilder.h"
@@ -20,6 +21,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Transforms/Utils/Local.h"
+
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -154,7 +156,7 @@ TEST(StripTest, LoopMetadata) {
   EXPECT_FALSE(BrokenDebugInfo);
 }
 
-TEST(MetadataTest, DeleteInstUsedByDbgValue) {
+TEST(MetadataTest, DeleteInstUsedByDbgRecord) {
   LLVMContext C;
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
@@ -185,12 +187,13 @@ TEST(MetadataTest, DeleteInstUsedByDbgValue) {
 
   // Find the dbg.value using %b.
   SmallVector<DbgValueInst *, 1> DVIs;
-  findDbgValues(DVIs, &I);
+  SmallVector<DbgVariableRecord *, 1> DVRs;
+  findDbgValues(DVIs, &I, &DVRs);
 
   // Delete %b. The dbg.value should now point to undef.
   I.eraseFromParent();
-  EXPECT_EQ(DVIs[0]->getNumVariableLocationOps(), 1u);
-  EXPECT_TRUE(isa<UndefValue>(DVIs[0]->getValue(0)));
+  EXPECT_EQ(DVRs[0]->getNumVariableLocationOps(), 1u);
+  EXPECT_TRUE(isa<UndefValue>(DVRs[0]->getValue(0)));
 }
 
 TEST(DbgVariableIntrinsic, EmptyMDIsKillLocation) {
@@ -228,8 +231,8 @@ TEST(DbgVariableIntrinsic, EmptyMDIsKillLocation) {
 
   // Get the dbg.declare.
   Function &F = *cast<Function>(M->getNamedValue("fun"));
-  DbgVariableIntrinsic *DbgDeclare =
-      cast<DbgVariableIntrinsic>(&F.front().front());
+  DbgVariableRecord *DbgDeclare =
+      cast<DbgVariableRecord>(&*F.front().front().getDbgRecordRange().begin());
   // Check that this form counts as a "no location" marker.
   EXPECT_TRUE(DbgDeclare->isKillLocation());
 }
@@ -237,6 +240,9 @@ TEST(DbgVariableIntrinsic, EmptyMDIsKillLocation) {
 // Duplicate of above test, but in DbgVariableRecord representation.
 TEST(MetadataTest, DeleteInstUsedByDbgVariableRecord) {
   LLVMContext C;
+  bool OldDbgValueMode = UseNewDbgInfoFormat;
+  UseNewDbgInfoFormat = true;
+
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
       %b = add i16 %a, 1, !dbg !11
@@ -262,10 +268,7 @@ TEST(MetadataTest, DeleteInstUsedByDbgVariableRecord) {
     !11 = !DILocation(line: 1, column: 1, scope: !6)
 )");
 
-  bool OldDbgValueMode = UseNewDbgInfoFormat;
-  UseNewDbgInfoFormat = true;
   Instruction &I = *M->getFunction("f")->getEntryBlock().getFirstNonPHI();
-  M->convertToNewDbgValues();
 
   // Find the DbgVariableRecords using %b.
   SmallVector<DbgValueInst *, 2> DVIs;
@@ -287,6 +290,8 @@ TEST(MetadataTest, DeleteInstUsedByDbgVariableRecord) {
 // Ensure that the order of dbg.value intrinsics returned by findDbgValues, and
 // their corresponding DbgVariableRecord representation, are consistent.
 TEST(MetadataTest, OrderingOfDbgVariableRecords) {
+  bool OldDbgValueMode = UseNewDbgInfoFormat;
+  UseNewDbgInfoFormat = false;
   LLVMContext C;
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
@@ -314,8 +319,6 @@ TEST(MetadataTest, OrderingOfDbgVariableRecords) {
     !12 = !DILocalVariable(name: "bar", scope: !6, file: !1, line: 1, type: !10)
 )");
 
-  bool OldDbgValueMode = UseNewDbgInfoFormat;
-  UseNewDbgInfoFormat = true;
   Instruction &I = *M->getFunction("f")->getEntryBlock().getFirstNonPHI();
 
   SmallVector<DbgValueInst *, 2> DVIs;
@@ -349,7 +352,7 @@ TEST(MetadataTest, OrderingOfDbgVariableRecords) {
   UseNewDbgInfoFormat = OldDbgValueMode;
 }
 
-TEST(DIBuiler, CreateFile) {
+TEST(DIBuilder, CreateFile) {
   LLVMContext Ctx;
   std::unique_ptr<Module> M(new Module("MyModule", Ctx));
   DIBuilder DIB(*M);
@@ -513,14 +516,15 @@ TEST(DbgAssignIntrinsicTest, replaceVariableLocationOp) {
   Value *V1 = Fun.getArg(0);
   Value *P1 = Fun.getArg(1);
   Value *P2 = Fun.getArg(2);
-  DbgAssignIntrinsic *DAI = cast<DbgAssignIntrinsic>(Fun.begin()->begin());
-  ASSERT_TRUE(V1 == DAI->getVariableLocationOp(0));
-  ASSERT_TRUE(P1 == DAI->getAddress());
+  DbgVariableRecord *DbgAssign = cast<DbgVariableRecord>(
+      &*Fun.front().front().getDbgRecordRange().begin());
+  ASSERT_TRUE(V1 == DbgAssign->getVariableLocationOp(0));
+  ASSERT_TRUE(P1 == DbgAssign->getAddress());
 
 #define TEST_REPLACE(Old, New, ExpectedValue, ExpectedAddr)                    \
-  DAI->replaceVariableLocationOp(Old, New);                                    \
-  EXPECT_EQ(DAI->getVariableLocationOp(0), ExpectedValue);                     \
-  EXPECT_EQ(DAI->getAddress(), ExpectedAddr);
+  DbgAssign->replaceVariableLocationOp(Old, New);                              \
+  EXPECT_EQ(DbgAssign->getVariableLocationOp(0), ExpectedValue);               \
+  EXPECT_EQ(DbgAssign->getAddress(), ExpectedAddr);
 
   // Replace address only.
   TEST_REPLACE(/*Old*/ P1, /*New*/ P2, /*Value*/ V1, /*Address*/ P2);
@@ -531,8 +535,8 @@ TEST(DbgAssignIntrinsicTest, replaceVariableLocationOp) {
 
   // Replace address only, value uses a DIArgList.
   // Value = {DIArgList(V1)}, Addr = P1.
-  DAI->setRawLocation(DIArgList::get(C, ValueAsMetadata::get(V1)));
-  DAI->setExpression(DIExpression::get(
+  DbgAssign->setRawLocation(DIArgList::get(C, ValueAsMetadata::get(V1)));
+  DbgAssign->setExpression(DIExpression::get(
       C, {dwarf::DW_OP_LLVM_arg, 0, dwarf::DW_OP_stack_value}));
   TEST_REPLACE(/*Old*/ P1, /*New*/ P2, /*Value*/ V1, /*Address*/ P2);
 #undef TEST_REPLACE
@@ -618,11 +622,11 @@ TEST(AssignmentTrackingTest, Utils) {
   //
   // Check there are two llvm.dbg.assign intrinsics linked to Alloca.
   auto CheckFun1Mapping = [&Alloca]() {
-    auto Markers = at::getAssignmentMarkers(&Alloca);
+    auto Markers = at::getDVRAssignmentMarkers(&Alloca);
     EXPECT_TRUE(std::distance(Markers.begin(), Markers.end()) == 2);
     // Check those two entries are distinct.
-    DbgAssignIntrinsic *First = *Markers.begin();
-    DbgAssignIntrinsic *Second = *std::next(Markers.begin());
+    DbgVariableRecord *First = *Markers.begin();
+    DbgVariableRecord *Second = *std::next(Markers.begin());
     EXPECT_NE(First, Second);
 
     // Check that we can get back to Alloca from each llvm.dbg.assign.
@@ -658,7 +662,7 @@ TEST(AssignmentTrackingTest, Utils) {
   DIAssignID *Fun2ID = cast_or_null<DIAssignID>(
       Fun2Alloca.getMetadata(LLVMContext::MD_DIAssignID));
   EXPECT_NE(New, Fun2ID);
-  auto Fun2Markers = at::getAssignmentMarkers(&Fun2Alloca);
+  auto Fun2Markers = at::getDVRAssignmentMarkers(&Fun2Alloca);
   ASSERT_TRUE(std::distance(Fun2Markers.begin(), Fun2Markers.end()) == 1);
   auto Fun2Insts = at::getAssignmentInsts(*Fun2Markers.begin());
   ASSERT_TRUE(std::distance(Fun2Insts.begin(), Fun2Insts.end()) == 1);
@@ -667,10 +671,10 @@ TEST(AssignmentTrackingTest, Utils) {
   // 3. Check that deleting dbg.assigns from a specific instruction works.
   Instruction &Fun3Alloca =
       *M->getFunction("fun3")->getEntryBlock().getFirstNonPHIOrDbg();
-  auto Fun3Markers = at::getAssignmentMarkers(&Fun3Alloca);
+  auto Fun3Markers = at::getDVRAssignmentMarkers(&Fun3Alloca);
   ASSERT_TRUE(std::distance(Fun3Markers.begin(), Fun3Markers.end()) == 1);
   at::deleteAssignmentMarkers(&Fun3Alloca);
-  Fun3Markers = at::getAssignmentMarkers(&Fun3Alloca);
+  Fun3Markers = at::getDVRAssignmentMarkers(&Fun3Alloca);
   EXPECT_EQ(Fun3Markers.empty(), true);
 
   // 4. Check that deleting works and applies only to the target function.
@@ -681,7 +685,7 @@ TEST(AssignmentTrackingTest, Utils) {
   // llvm.dbg.assign.
   EXPECT_EQ(Fun2ID, cast_or_null<DIAssignID>(
                         Fun2Alloca.getMetadata(LLVMContext::MD_DIAssignID)));
-  EXPECT_FALSE(at::getAssignmentMarkers(&Fun2Alloca).empty());
+  EXPECT_FALSE(at::getDVRAssignmentMarkers(&Fun2Alloca).empty());
 }
 
 TEST(IRBuilder, GetSetInsertionPointWithEmptyBasicBlock) {
@@ -767,12 +771,12 @@ TEST(AssignmentTrackingTest, InstrMethods) {
   // Use SetVectors to check that the attachments and markers are unique
   // (another test requirement).
   SetVector<Metadata *> OrigIDs;
-  SetVector<DbgAssignIntrinsic *> Markers;
+  SetVector<DbgVariableRecord *> Markers;
   for (const Instruction *SI : Stores) {
     Metadata *ID = SI->getMetadata(LLVMContext::MD_DIAssignID);
     ASSERT_TRUE(OrigIDs.insert(ID));
     ASSERT_TRUE(ID != nullptr);
-    auto Range = at::getAssignmentMarkers(SI);
+    auto Range = at::getDVRAssignmentMarkers(SI);
     ASSERT_TRUE(std::distance(Range.begin(), Range.end()) == 1);
     ASSERT_TRUE(Markers.insert(*Range.begin()));
   }
@@ -865,6 +869,8 @@ TEST(AssignmentTrackingTest, InstrMethods) {
 // dbg.values that have been converted to a non-instruction format.
 TEST(MetadataTest, ConvertDbgToDbgVariableRecord) {
   LLVMContext C;
+  bool OldDbgValueMode = UseNewDbgInfoFormat;
+  UseNewDbgInfoFormat = false;
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
       call void @llvm.dbg.value(metadata i16 %a, metadata !9, metadata !DIExpression()), !dbg !11
@@ -947,67 +953,68 @@ TEST(MetadataTest, ConvertDbgToDbgVariableRecord) {
   Instruction *FirstInst = &ExitBlock->front();
   Instruction *RetInst = &*std::next(FirstInst->getIterator());
 
-  // Set-up DPMarkers in this block.
+  // Set-up DbgMarkers in this block.
   ExitBlock->IsNewDbgInfoFormat = true;
   ExitBlock->createMarker(FirstInst);
   ExitBlock->createMarker(RetInst);
 
   // Insert DbgRecords into markers, order should come out DVR2, DVR1.
-  FirstInst->DbgMarker->insertDbgRecord(DVR1, false);
-  FirstInst->DbgMarker->insertDbgRecord(DVR2, true);
+  FirstInst->DebugMarker->insertDbgRecord(DVR1, false);
+  FirstInst->DebugMarker->insertDbgRecord(DVR2, true);
   unsigned int ItCount = 0;
-  for (DbgRecord &Item : FirstInst->DbgMarker->getDbgRecordRange()) {
+  for (DbgRecord &Item : FirstInst->DebugMarker->getDbgRecordRange()) {
     EXPECT_TRUE((&Item == DVR2 && ItCount == 0) ||
                 (&Item == DVR1 && ItCount == 1));
-    EXPECT_EQ(Item.getMarker(), FirstInst->DbgMarker);
+    EXPECT_EQ(Item.getMarker(), FirstInst->DebugMarker);
     ++ItCount;
   }
 
   // Clone them onto the second marker -- should allocate new DVRs.
-  RetInst->DbgMarker->cloneDebugInfoFrom(FirstInst->DbgMarker, std::nullopt, false);
-  EXPECT_EQ(RetInst->DbgMarker->StoredDbgRecords.size(), 2u);
+  RetInst->DebugMarker->cloneDebugInfoFrom(FirstInst->DebugMarker, std::nullopt,
+                                           false);
+  EXPECT_EQ(RetInst->DebugMarker->StoredDbgRecords.size(), 2u);
   ItCount = 0;
   // Check these things store the same information; but that they're not the same
   // objects.
   for (DbgVariableRecord &Item :
-       filterDbgVars(RetInst->DbgMarker->getDbgRecordRange())) {
+       filterDbgVars(RetInst->DebugMarker->getDbgRecordRange())) {
     EXPECT_TRUE(
         (Item.getRawLocation() == DVR2->getRawLocation() && ItCount == 0) ||
         (Item.getRawLocation() == DVR1->getRawLocation() && ItCount == 1));
 
-    EXPECT_EQ(Item.getMarker(), RetInst->DbgMarker);
+    EXPECT_EQ(Item.getMarker(), RetInst->DebugMarker);
     EXPECT_NE(&Item, DVR1);
     EXPECT_NE(&Item, DVR2);
     ++ItCount;
   }
 
-  RetInst->DbgMarker->dropDbgRecords();
-  EXPECT_EQ(RetInst->DbgMarker->StoredDbgRecords.size(), 0u);
+  RetInst->DebugMarker->dropDbgRecords();
+  EXPECT_EQ(RetInst->DebugMarker->StoredDbgRecords.size(), 0u);
 
   // Try cloning one single DbgVariableRecord.
-  auto DIIt = std::next(FirstInst->DbgMarker->getDbgRecordRange().begin());
-  RetInst->DbgMarker->cloneDebugInfoFrom(FirstInst->DbgMarker, DIIt, false);
-  EXPECT_EQ(RetInst->DbgMarker->StoredDbgRecords.size(), 1u);
+  auto DIIt = std::next(FirstInst->DebugMarker->getDbgRecordRange().begin());
+  RetInst->DebugMarker->cloneDebugInfoFrom(FirstInst->DebugMarker, DIIt, false);
+  EXPECT_EQ(RetInst->DebugMarker->StoredDbgRecords.size(), 1u);
   // The second DbgVariableRecord should have been cloned; it should have the
   // same values as DVR1.
   EXPECT_EQ(
-      cast<DbgVariableRecord>(RetInst->DbgMarker->StoredDbgRecords.begin())
+      cast<DbgVariableRecord>(RetInst->DebugMarker->StoredDbgRecords.begin())
           ->getRawLocation(),
       DVR1->getRawLocation());
   // We should be able to drop individual DbgRecords.
-  RetInst->DbgMarker->dropOneDbgRecord(
-      &*RetInst->DbgMarker->StoredDbgRecords.begin());
+  RetInst->DebugMarker->dropOneDbgRecord(
+      &*RetInst->DebugMarker->StoredDbgRecords.begin());
 
-  // "Aborb" a DPMarker: this means pretend that the instruction it's attached
+  // "Aborb" a DbgMarker: this means pretend that the instruction it's attached
   // to is disappearing so it needs to be transferred into "this" marker.
-  RetInst->DbgMarker->absorbDebugValues(*FirstInst->DbgMarker, true);
-  EXPECT_EQ(RetInst->DbgMarker->StoredDbgRecords.size(), 2u);
+  RetInst->DebugMarker->absorbDebugValues(*FirstInst->DebugMarker, true);
+  EXPECT_EQ(RetInst->DebugMarker->StoredDbgRecords.size(), 2u);
   // Should be the DVR1 and DVR2 objects.
   ItCount = 0;
-  for (DbgRecord &Item : RetInst->DbgMarker->getDbgRecordRange()) {
+  for (DbgRecord &Item : RetInst->DebugMarker->getDbgRecordRange()) {
     EXPECT_TRUE((&Item == DVR2 && ItCount == 0) ||
                 (&Item == DVR1 && ItCount == 1));
-    EXPECT_EQ(Item.getMarker(), RetInst->DbgMarker);
+    EXPECT_EQ(Item.getMarker(), RetInst->DebugMarker);
     ++ItCount;
   }
 
@@ -1015,12 +1022,12 @@ TEST(MetadataTest, ConvertDbgToDbgVariableRecord) {
   // evrything in the basic block, then they should sink down into the
   // "TrailingDbgRecords" container for dangling debug-info. Future facilities
   // will restore them back when a terminator is inserted.
-  FirstInst->DbgMarker->removeMarker();
+  FirstInst->DebugMarker->removeMarker();
   FirstInst->eraseFromParent();
-  RetInst->DbgMarker->removeMarker();
+  RetInst->DebugMarker->removeMarker();
   RetInst->eraseFromParent();
 
-  DPMarker *EndMarker = ExitBlock->getTrailingDbgRecords();
+  DbgMarker *EndMarker = ExitBlock->getTrailingDbgRecords();
   ASSERT_NE(EndMarker, nullptr);
   EXPECT_EQ(EndMarker->StoredDbgRecords.size(), 2u);
   // Test again that it's those two DbgVariableRecords, DVR1 and DVR2.
@@ -1038,14 +1045,14 @@ TEST(MetadataTest, ConvertDbgToDbgVariableRecord) {
   // The record of those trailing DbgVariableRecords would dangle and cause an
   // assertion failure if it lived until the end of the LLVMContext.
   ExitBlock->deleteTrailingDbgRecords();
+  UseNewDbgInfoFormat = OldDbgValueMode;
 }
 
 TEST(MetadataTest, DbgVariableRecordConversionRoutines) {
   LLVMContext C;
 
-  // For the purpose of this test, set and un-set the command line option
-  // corresponding to UseNewDbgInfoFormat.
-  UseNewDbgInfoFormat = true;
+  bool OldDbgValueMode = UseNewDbgInfoFormat;
+  UseNewDbgInfoFormat = false;
 
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
@@ -1076,6 +1083,11 @@ TEST(MetadataTest, DbgVariableRecordConversionRoutines) {
     !11 = !DILocation(line: 1, column: 1, scope: !6)
 )");
 
+  // For the purpose of this test, set and un-set the command line option
+  // corresponding to UseNewDbgInfoFormat, but only after parsing, to ensure
+  // that the IR starts off in the old format.
+  UseNewDbgInfoFormat = true;
+
   // Check that the conversion routines and utilities between dbg.value
   // debug-info format and DbgVariableRecords works.
   Function *F = M->getFunction("f");
@@ -1083,7 +1095,7 @@ TEST(MetadataTest, DbgVariableRecordConversionRoutines) {
   // First instruction should be a dbg.value.
   EXPECT_TRUE(isa<DbgValueInst>(BB1->front()));
   EXPECT_FALSE(BB1->IsNewDbgInfoFormat);
-  // Validating the block for DbgVariableRecords / DPMarkers shouldn't fail --
+  // Validating the block for DbgVariableRecords / DbgMarkers shouldn't fail --
   // there's no data stored right now.
   bool BrokenDebugInfo = false;
   bool Error = verifyModule(*M, &errs(), &BrokenDebugInfo);
@@ -1107,38 +1119,39 @@ TEST(MetadataTest, DbgVariableRecordConversionRoutines) {
     for (auto &I : BB)
       EXPECT_FALSE(isa<DbgValueInst>(I));
 
-  // There should be a DPMarker on each of the two instructions in the entry
+  // There should be a DbgMarker on each of the two instructions in the entry
   // block, each containing one DbgVariableRecord.
   EXPECT_EQ(BB1->size(), 2u);
   Instruction *FirstInst = &BB1->front();
   Instruction *SecondInst = FirstInst->getNextNode();
-  ASSERT_TRUE(FirstInst->DbgMarker);
-  ASSERT_TRUE(SecondInst->DbgMarker);
-  EXPECT_NE(FirstInst->DbgMarker, SecondInst->DbgMarker);
-  EXPECT_EQ(FirstInst, FirstInst->DbgMarker->MarkedInstr);
-  EXPECT_EQ(SecondInst, SecondInst->DbgMarker->MarkedInstr);
+  ASSERT_TRUE(FirstInst->DebugMarker);
+  ASSERT_TRUE(SecondInst->DebugMarker);
+  EXPECT_NE(FirstInst->DebugMarker, SecondInst->DebugMarker);
+  EXPECT_EQ(FirstInst, FirstInst->DebugMarker->MarkedInstr);
+  EXPECT_EQ(SecondInst, SecondInst->DebugMarker->MarkedInstr);
 
-  EXPECT_EQ(FirstInst->DbgMarker->StoredDbgRecords.size(), 1u);
+  EXPECT_EQ(FirstInst->DebugMarker->StoredDbgRecords.size(), 1u);
   DbgVariableRecord *DVR1 = cast<DbgVariableRecord>(
-      &*FirstInst->DbgMarker->getDbgRecordRange().begin());
-  EXPECT_EQ(DVR1->getMarker(), FirstInst->DbgMarker);
+      &*FirstInst->DebugMarker->getDbgRecordRange().begin());
+  EXPECT_EQ(DVR1->getMarker(), FirstInst->DebugMarker);
   // Should point at %a, an argument.
   EXPECT_TRUE(isa<Argument>(DVR1->getVariableLocationOp(0)));
 
-  EXPECT_EQ(SecondInst->DbgMarker->StoredDbgRecords.size(), 1u);
+  EXPECT_EQ(SecondInst->DebugMarker->StoredDbgRecords.size(), 1u);
   DbgVariableRecord *DVR2 = cast<DbgVariableRecord>(
-      &*SecondInst->DbgMarker->getDbgRecordRange().begin());
-  EXPECT_EQ(DVR2->getMarker(), SecondInst->DbgMarker);
+      &*SecondInst->DebugMarker->getDbgRecordRange().begin());
+  EXPECT_EQ(DVR2->getMarker(), SecondInst->DebugMarker);
   // Should point at FirstInst.
   EXPECT_EQ(DVR2->getVariableLocationOp(0), FirstInst);
 
-  // There should be no DbgVariableRecords / DPMarkers in the second block, but
+  // There should be no DbgVariableRecords / DbgMarkers in the second block, but
   // it should be marked as being in the new format.
   BasicBlock *BB2 = BB1->getNextNode();
   EXPECT_TRUE(BB2->IsNewDbgInfoFormat);
   for (auto &Inst : *BB2)
     // Either there should be no marker, or it should be empty.
-    EXPECT_TRUE(!Inst.DbgMarker || Inst.DbgMarker->StoredDbgRecords.empty());
+    EXPECT_TRUE(!Inst.DebugMarker ||
+                Inst.DebugMarker->StoredDbgRecords.empty());
 
   // Validating the first block should continue to not be a problem,
   Error = verifyModule(*M, &errs(), &BrokenDebugInfo);
@@ -1152,7 +1165,7 @@ TEST(MetadataTest, DbgVariableRecordConversionRoutines) {
   Error = verifyModule(*M, &errs(), &BrokenDebugInfo);
   EXPECT_FALSE(Error);
   EXPECT_TRUE(BrokenDebugInfo);
-  DVR1->setMarker(FirstInst->DbgMarker);
+  DVR1->setMarker(FirstInst->DebugMarker);
 
   DILocalVariable *DLV1 = DVR1->getVariable();
   DIExpression *Expr1 = DVR1->getExpression();
@@ -1179,7 +1192,56 @@ TEST(MetadataTest, DbgVariableRecordConversionRoutines) {
   EXPECT_EQ(DVI2->getVariable(), DLV2);
   EXPECT_EQ(DVI2->getExpression(), Expr2);
 
-  UseNewDbgInfoFormat = false;
+  UseNewDbgInfoFormat = OldDbgValueMode;
+}
+
+// Test that the hashing function for DISubprograms representing methods produce
+// the same result after replacing their scope (the type containing the
+// subprogram) from a temporary DIType with the permanent one.
+TEST(DIBuilder, HashingDISubprogram) {
+  LLVMContext Ctx;
+  std::unique_ptr<Module> M = std::make_unique<Module>("MyModule", Ctx);
+  DIBuilder DIB(*M);
+
+  DIFile *F = DIB.createFile("main.c", "/");
+  DICompileUnit *CU =
+      DIB.createCompileUnit(dwarf::DW_LANG_C, F, "Test", false, "", 0);
+
+  llvm::TempDIType ForwardDeclaredType =
+      llvm::TempDIType(DIB.createReplaceableCompositeType(
+          llvm::dwarf::DW_TAG_structure_type, "MyType", CU, F, 0, 0, 8, 8, {},
+          "UniqueIdentifier"));
+
+  // The hashing function is different for declarations and definitions, so
+  // create one of each.
+  DISubprogram *Declaration =
+      DIB.createMethod(ForwardDeclaredType.get(), "MethodName", "LinkageName",
+                       F, 0, DIB.createSubroutineType({}));
+
+  DISubprogram *Definition = DIB.createFunction(
+      ForwardDeclaredType.get(), "MethodName", "LinkageName", F, 0,
+      DIB.createSubroutineType({}), 0, DINode::FlagZero,
+      llvm::DISubprogram::SPFlagDefinition, nullptr, Declaration);
+
+  // Produce the hash with the temporary scope.
+  unsigned HashDeclaration =
+      MDNodeKeyImpl<DISubprogram>(Declaration).getHashValue();
+  unsigned HashDefinition =
+      MDNodeKeyImpl<DISubprogram>(Definition).getHashValue();
+
+  // Instantiate the real scope and replace the temporary one with it.
+  DICompositeType *Type = DIB.createStructType(CU, "MyType", F, 0, 8, 8, {}, {},
+                                               {}, 0, {}, "UniqueIdentifier");
+  DIB.replaceTemporary(std::move(ForwardDeclaredType), Type);
+
+  // Now make sure the hashing is consistent.
+  unsigned HashDeclarationAfter =
+      MDNodeKeyImpl<DISubprogram>(Declaration).getHashValue();
+  unsigned HashDefinitionAfter =
+      MDNodeKeyImpl<DISubprogram>(Definition).getHashValue();
+
+  EXPECT_EQ(HashDeclaration, HashDeclarationAfter);
+  EXPECT_EQ(HashDefinition, HashDefinitionAfter);
 }
 
 } // end namespace

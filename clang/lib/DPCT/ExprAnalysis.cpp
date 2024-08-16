@@ -25,6 +25,8 @@
 #include "clang/AST/StmtGraphTraits.h"
 #include "clang/AST/StmtObjC.h"
 #include "clang/AST/StmtOpenMP.h"
+#include "clang/AST/TypeLoc.h"
+#include "llvm/Support/raw_ostream.h"
 
 extern clang::tooling::UnifiedPath DpctInstallPath;
 namespace clang {
@@ -441,7 +443,7 @@ void ExprAnalysis::dispatch(const Stmt *Expression) {
   }
 }
 
-bool isMathFunction(std::string Name) {
+bool isMathFunctionExceptRewriter(std::string Name) {
   static std::set<std::string> MathFunctions = {
 #define ENTRY_RENAMED(SOURCEAPINAME, TARGETAPINAME) SOURCEAPINAME,
 #define ENTRY_RENAMED_NO_REWRITE(SOURCEAPINAME, TARGETAPINAME) SOURCEAPINAME,
@@ -452,6 +454,31 @@ bool isMathFunction(std::string Name) {
 #define ENTRY_TYPECAST(APINAME) APINAME,
 #define ENTRY_UNSUPPORTED(APINAME) APINAME,
 #define ENTRY_REWRITE(APINAME)
+#include "APINamesMath.inc"
+#undef ENTRY_RENAMED
+#undef ENTRY_RENAMED_NO_REWRITE
+#undef ENTRY_RENAMED_SINGLE
+#undef ENTRY_RENAMED_DOUBLE
+#undef ENTRY_EMULATED
+#undef ENTRY_OPERATOR
+#undef ENTRY_TYPECAST
+#undef ENTRY_UNSUPPORTED
+#undef ENTRY_REWRITE
+  };
+  return MathFunctions.count(Name);
+}
+
+bool isMathFunction(std::string Name) {
+  static std::set<std::string> MathFunctions = {
+#define ENTRY_RENAMED(SOURCEAPINAME, TARGETAPINAME) SOURCEAPINAME,
+#define ENTRY_RENAMED_NO_REWRITE(SOURCEAPINAME, TARGETAPINAME) SOURCEAPINAME,
+#define ENTRY_RENAMED_SINGLE(SOURCEAPINAME, TARGETAPINAME) SOURCEAPINAME,
+#define ENTRY_RENAMED_DOUBLE(SOURCEAPINAME, TARGETAPINAME) SOURCEAPINAME,
+#define ENTRY_EMULATED(SOURCEAPINAME, TARGETAPINAME) SOURCEAPINAME,
+#define ENTRY_OPERATOR(APINAME, OPKIND) APINAME,
+#define ENTRY_TYPECAST(APINAME) APINAME,
+#define ENTRY_UNSUPPORTED(APINAME) APINAME,
+#define ENTRY_REWRITE(APINAME) APINAME,
 #include "APINamesMath.inc"
 #undef ENTRY_RENAMED
 #undef ENTRY_RENAMED_NO_REWRITE
@@ -479,9 +506,12 @@ void ExprAnalysis::analyzeExpr(const DeclRefExpr *DRE) {
             clang::NestedNameSpecifier::SpecifierKind::Namespace ||
         Qualifier->getKind() ==
             clang::NestedNameSpecifier::SpecifierKind::NamespaceAlias;
-    bool IsSpecicalAPI = isMathFunction(DRE->getNameInfo().getAsString()) ||
-                         isCGAPI(DRE->getNameInfo().getAsString());
-                         // for thrust::log10 and thrust::sinh ...
+    bool IsSpecicalAPI =
+        isMathFunctionExceptRewriter(DRE->getNameInfo().getAsString()) ||
+        isCGAPI(DRE->getNameInfo().getAsString());
+    // for thrust::log10 and thrust::sinh ...
+    if (Qualifier->getKind() == NestedNameSpecifier::TypeSpec)
+      analyzeType(DRE->getQualifierLoc().getTypeLoc());
     // log10 is a math function
     if (Qualifier->getAsNamespace() &&
         Qualifier->getAsNamespace()->getName() == "thrust" &&
@@ -509,6 +539,12 @@ void ExprAnalysis::analyzeExpr(const DeclRefExpr *DRE) {
         CTSName = getNestedNameSpecifierString(Qualifier) +
                   DRE->getNameInfo().getAsString();
       }
+    }
+  } else if (const auto *FD = dyn_cast_or_null<FunctionDecl>(DRE->getDecl())) {
+    if (!isMathFunction(DRE->getNameInfo().getAsString()) &&
+        !isCGAPI(DRE->getNameInfo().getAsString())) {
+      llvm::raw_string_ostream OS(CTSName);
+      FD->printQualifiedName(OS);
     }
   }
 
@@ -597,19 +633,6 @@ void ExprAnalysis::analyzeExpr(const InitListExpr *ILE) {
         if (QT->isPointerType()) {
           QT = QT->getPointeeType();
         }
-        if (DpctGlobalInfo::getUnqualifiedTypeName(
-                QT->getCanonicalTypeUnqualified()) == "dim3") {
-          // Replace initializer list with explicit type conversion (e.g.,
-          // 'int64_t{d3[2]}' to 'int64_t(d3[2])') to slience narrowing
-          // error (e.g., 'size_t -> int64_t') for
-          // non-constant-expression in int64_t initializer list.
-          // E.g.,
-          // dim3 d3; int64_t{d3.x};
-          // will be migratd to
-          // sycl::range<3> d3; int64_t(d3[2]);
-          addReplacement(ILE->getLBraceLoc(), "(");
-          addReplacement(ILE->getRBraceLoc(), ")");
-        }
       }
     }
   }
@@ -625,44 +648,11 @@ void ExprAnalysis::analyzeExpr(const CXXUnresolvedConstructExpr *Ctor) {
 }
 
 void ExprAnalysis::analyzeExpr(const CXXTemporaryObjectExpr *Temp) {
-  if (Temp->getConstructor()->getDeclName().getAsString() != "dim3") {
-    analyzeType(Temp->getTypeSourceInfo()->getTypeLoc());
-  }
+  analyzeType(Temp->getTypeSourceInfo()->getTypeLoc());
   analyzeExpr(static_cast<const CXXConstructExpr *>(Temp));
 }
 
 void ExprAnalysis::analyzeExpr(const CXXConstructExpr *Ctor) {
-  if (Ctor->getConstructor()->getDeclName().getAsString() == "dim3") {
-    std::string ArgsString;
-    llvm::raw_string_ostream OS(ArgsString);
-    DpctGlobalInfo::printCtadClass(OS, MapNames::getClNamespace() + "range", 3)
-        << "(";
-    ArgumentAnalysis A;
-    std::string ArgStr = "";
-    for (auto Arg : Ctor->arguments()) {
-      A.analyze(Arg);
-      ArgStr = ", " + A.getReplacedString() + ArgStr;
-    }
-    ArgStr.replace(0, 2, "");
-    OS << ArgStr << ")";
-    OS.flush();
-
-    // Special handling for implicit ctor.
-    // #define GET_BLOCKS(a) a
-    // dim3 A = GET_BLOCKS(1);
-    // Result if using SM.getExpansionRange:
-    //   sycl::range<3> A = sycl::range<3>(1, 1, GET_BLOCKS(1));
-    // Result if using addReplacement(E):
-    //   #define GET_BLOCKS(a) sycl::range<3>(1, 1, a)
-    //   sycl::range<3> A = GET_BLOCKS(1);
-    if (Ctor->getParenOrBraceRange().isInvalid() && isOuterMostMacro(Ctor)) {
-      return addReplacement(
-          SM.getExpansionRange(Ctor->getBeginLoc()).getBegin(),
-          SM.getExpansionRange(Ctor->getEndLoc()).getEnd(), ArgsString);
-    }
-    addReplacement(Ctor, ArgsString);
-    return;
-  }
   for (auto It = Ctor->arg_begin(); It != Ctor->arg_end(); It++) {
     dispatch(*It);
   }
@@ -750,63 +740,6 @@ void ExprAnalysis::analyzeExpr(const MemberExpr *ME) {
                                          ItemItr->second, "(", FieldName, ")"));
         }
       }
-    }
-  } else if (BaseType == "dim3") {
-    if (ME->isArrow()) {
-      addReplacement(ME->getBase(), "(" + getDrefName(ME->getBase()) + ")");
-    }
-    addReplacement(
-        ME->getOperatorLoc(), ME->getMemberLoc(),
-        MapNames::findReplacedName(MapNames::Dim3MemberNamesMap,
-                                   ME->getMemberNameInfo().getAsString()));
-   
-    auto needAddTypecast = [](const Expr *E) -> bool {
-      auto &Context = DpctGlobalInfo::getContext();
-      clang::DynTypedNodeList Parents = Context.getParents(*E);
-      bool hasCast = false;
-      while (!Parents.empty()) {
-        auto &Cur = Parents[0];
-        if (const auto ICE = Cur.get<ImplicitCastExpr>()) {
-          CastKind CK = ICE->getCastKind();
-          if (CK == CastKind::CK_FloatingCast ||
-              CK == CastKind::CK_IntegralCast) {
-            hasCast = true;
-            Parents = Context.getParents(Cur);
-            continue;
-          }
-        } else if (Cur.get<CXXStaticCastExpr>() || Cur.get<CStyleCastExpr>() ||
-                   Cur.get<CXXFunctionalCastExpr>()) {
-          hasCast = true;
-          Parents = Context.getParents(Cur);
-          continue;
-        } else if (const auto CE = Cur.get<CallExpr>()) {
-          if (hasCast)
-            return false;
-          auto *Callee =
-              dyn_cast<DeclRefExpr>(CE->getCallee()->IgnoreParenImpCasts());
-          if (!Callee)
-            return false;
-          if (CE->getDirectCallee()->isTemplateInstantiation())
-            return true;
-          if (!Callee->getQualifier())
-            return false;
-          if (Callee->getQualifier()->getKind() !=
-              NestedNameSpecifier::SpecifierKind::Namespace)
-            return false;
-          if (Callee->getQualifier()->getAsNamespace()->getNameAsString() !=
-              "std")
-            return false;
-          if (Callee->getNameInfo().getAsString() == "max" ||
-              Callee->getNameInfo().getAsString() == "min")
-            return true;
-          return false;
-        }
-        Parents = Context.getParents(Cur);
-      }
-      return false;
-    };
-    if (needAddTypecast(ME)) {
-      addReplacement(ME->getBeginLoc(), 0, "(unsigned int)");
     }
   } else if (BaseType == "cudaDeviceProp") {
     auto MemberName = ME->getMemberNameInfo().getAsString();
@@ -931,11 +864,6 @@ inline void ExprAnalysis::analyzeExpr(const UnresolvedLookupExpr *ULE) {
 }
 
 void ExprAnalysis::analyzeExpr(const ExplicitCastExpr *Cast) {
-  if (Cast->getCastKind() == CastKind::CK_ConstructorConversion) {
-    if (DpctGlobalInfo::getUnqualifiedTypeName(Cast->getTypeAsWritten()) ==
-        "dim3")
-      return dispatch(Cast->getSubExpr());
-  }
   analyzeType(Cast->getTypeInfoAsWritten(), Cast);
   dispatch(Cast->getSubExprAsWritten());
 }
@@ -1028,7 +956,14 @@ void ExprAnalysis::analyzeExpr(const CallExpr *CE) {
 
   if (auto FD = DpctGlobalInfo::getParentFunction(CE)) {
     if (auto F = DpctGlobalInfo::getInstance().findDeviceFunctionDecl(FD)) {
-      if (auto C = F->getFuncInfo()->findCallee(CE)) {
+      auto FuncInfo = F->getFuncInfo();
+      if ((FuncInfo->getOverloadedOperatorKind() !=
+           OverloadedOperatorKind::OO_None) &&
+          (FuncInfo->getOverloadedOperatorKind() !=
+           OverloadedOperatorKind::OO_Call)) {
+        return;
+      }
+      if (auto C = FuncInfo->findCallee(CE)) {
         auto Extra = C->getExtraArguments();
         if (Extra.empty())
           return;
@@ -1189,6 +1124,13 @@ void ExprAnalysis::analyzeType(TypeLoc TL, const Expr *CSCE,
     RewriteType(TyName, TL);
     break;
   }
+  case TypeLoc::SubstTemplateTypeParm:
+    // Used for Instantiated class.
+    return addReplacement(TL.getBeginLoc(), TL.getEndLoc(), CSCE,
+                          TYPELOC_CAST(SubstTemplateTypeParmTypeLoc)
+                              .getType()
+                              ->getAs<SubstTemplateTypeParmType>()
+                              ->getIndex());
   case TypeLoc::TemplateTypeParm:
     if (auto D = TYPELOC_CAST(TemplateTypeParmTypeLoc).getDecl()) {
       return addReplacement(TL.getBeginLoc(), TL.getEndLoc(), CSCE,
@@ -1202,7 +1144,8 @@ void ExprAnalysis::analyzeType(TypeLoc TL, const Expr *CSCE,
     auto &TSTL = TYPELOC_CAST(TemplateSpecializationTypeLoc);
     auto PP = Context.getPrintingPolicy();
     PP.PrintCanonicalTypes = 1;
-    TSTL.getTypePtr()->getTemplateName().print(OS, PP, TemplateName::Qualified::Fully);
+    PrintFullTemplateName(OS, DpctGlobalInfo::getContext().getPrintingPolicy(),
+                        TSTL.getTypePtr()->getTemplateName());
     if (!TypeLocRewriterFactoryBase::TypeLocRewriterMap)
       return;
     auto Itr = TypeLocRewriterFactoryBase::TypeLocRewriterMap->find(OS.str());
@@ -1295,10 +1238,6 @@ void ExprAnalysis::analyzeDecltypeType(DecltypeTypeLoc TL) {
       return;
     auto Name = getNestedNameSpecifierString(Qualifier);
     auto Range = getDefinitionRange(SR.getBegin(), SR.getEnd());
-    // Types like 'dim3::x' should be migrated to 'size_t'.
-    if (Name == "dim3::") {
-      addReplacement(Range.getBegin(), Range.getEnd(), "size_t");
-    }
     Name.resize(Name.length() - 2); // Remove the "::".
     if (MapNames::SupportedVectorTypes.count(Name)) {
       auto ReplacedStr =
@@ -1689,6 +1628,7 @@ void KernelArgumentAnalysis::dispatch(const Stmt *Expression) {
     ANALYZE_EXPR(UnaryOperator)
     ANALYZE_EXPR(BinaryOperator)
     ANALYZE_EXPR(CXXDependentScopeMemberExpr)
+    ANALYZE_EXPR(DependentScopeDeclRefExpr)
     ANALYZE_EXPR(MaterializeTemporaryExpr)
     ANALYZE_EXPR(LambdaExpr)
     ANALYZE_EXPR(CXXTemporaryObjectExpr)
@@ -1711,6 +1651,10 @@ void KernelArgumentAnalysis::analyzeExpr(
   if (!Arg->isImplicitAccess()) {
     KernelArgumentAnalysis::dispatch(Arg->getBase());
   }
+}
+
+void KernelArgumentAnalysis::analyzeExpr(const DependentScopeDeclRefExpr *Arg) {
+  IsRedeclareRequired = true;
 }
 
 void KernelArgumentAnalysis::analyzeExpr(const DeclRefExpr *DRE) {
@@ -2177,7 +2121,7 @@ void KernelConfigAnalysis::analyzeExpr(const DeclRefExpr *DRE) {
 
   if (IsTryToUseOneDimension) {
     // Insert member access expr at the end of DRE
-    addReplacement(getExprLength(), 0, ".get(2)");
+    addReplacement(getExprLength(), 0, ".z");
   }
 }
 

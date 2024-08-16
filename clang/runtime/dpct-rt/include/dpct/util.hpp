@@ -31,6 +31,22 @@ T __spirv_GroupNonUniformShuffleUp(__spv::Scope::Flag, T, unsigned) noexcept;
 #endif
 
 namespace dpct {
+/// dim3 is used to store 3 component dimensions.
+class dim3 {
+public:
+  unsigned x, y, z;
+
+  constexpr dim3(unsigned x = 1, unsigned y = 1, unsigned z = 1)
+      : x(x), y(y), z(z) {}
+
+  dim3(const sycl::id<3> &r) : dim3(r[2], r[1], r[0]) {}
+
+  operator sycl::range<3>() const { return sycl::range<3>(z, y, x); }
+};
+
+inline dim3 operator*(const dim3 &a, const dim3 &b) {
+  return dim3{a.x * b.x, a.y * b.y, a.z * b.z};
+}
 
 namespace detail {
 
@@ -471,7 +487,7 @@ T shift_sub_group_left(unsigned int member_mask,
   (void)delta;
   (void)logical_sub_group_size;
   (void)member_mask;
-  throw sycl::exception(sycl::errc::runtime, "Masked version of select_from_sub_group not "
+  throw sycl::exception(sycl::errc::runtime, "Masked version of shift_sub_group_left not "
                         "supported on host device.");
 #endif // __SYCL_DEVICE_ONLY__
 }
@@ -515,7 +531,7 @@ T shift_sub_group_right(unsigned int member_mask,
   (void)delta;
   (void)logical_sub_group_size;
   (void)member_mask;
-  throw sycl::exception(sycl::errc::runtime, "Masked version of select_from_sub_group not "
+  throw sycl::exception(sycl::errc::runtime, "Masked version of shift_sub_group_right not "
                         "supported on host device.");
 #endif // __SYCL_DEVICE_ONLY__
 }
@@ -557,7 +573,7 @@ T permute_sub_group_by_xor(unsigned int member_mask,
   (void)mask;
   (void)logical_sub_group_size;
   (void)member_mask;
-  throw sycl::exception(sycl::errc::runtime, "Masked version of select_from_sub_group not "
+  throw sycl::exception(sycl::errc::runtime, "Masked version of permute_sub_group_by_xor not "
                         "supported on host device.");
 #endif // __SYCL_DEVICE_ONLY__
 }
@@ -617,6 +633,20 @@ inline int get_sycl_language_version() {
 #else
   return 202000;
 #endif
+}
+
+// Returns the SYCL event status for the SYCL command.
+/// \param [in] event_ptr A pointer points to the SYCL event
+/// \returns The execution result for the SYCL command
+inline int sycl_event_query(sycl::event *event_ptr) {
+  if (event_ptr->get_info<sycl::info::event::command_execution_status>() ==
+      sycl::info::event_command_status::complete) {
+    // The SYCL command has finished running on the SYCL device.
+    return 0;
+  } else {
+    // The SYCL command has not finished running on the SYCL device.
+    return 1;
+  }
 }
 
 namespace experimental {
@@ -836,8 +866,8 @@ inline int calculate_max_active_wg_per_xecore(int *num_wg, int wg_size,
   int num_wg_threads = std::floor((float)num_threads_ss / num_threads);
 
   // Calculate num_wg
-  *num_wg = std::min(num_wg_slm, num_wg_threads);
-  *num_wg = std::min(*num_wg, max_num_wg);
+  *num_wg = (std::min)(num_wg_slm, num_wg_threads);
+  *num_wg = (std::min)(*num_wg, max_num_wg);
   return ret;
 }
 

@@ -68,6 +68,7 @@ enum class FFTTypeEnum;
 class DeviceFunctionInfo;
 enum class HelperFileEnum : unsigned int;
 struct HelperFunc;
+class MigrationRule;
 } // namespace dpct
 
 namespace tooling {
@@ -205,7 +206,7 @@ inline bool isChildOrSamePath(clang::tooling::UnifiedPath Root,
 }
 
 /// Returns character sequence ("\n") on Linux, return ("\r\n") on Windows.
-const char *getNL(void);
+const char *getNL(bool AddBackSlash = false);
 
 /// Returns the character sequence ("\n" or "\r\n") used to represent new line
 /// in the source line containing Loc.
@@ -570,6 +571,7 @@ void getNameSpace(const NamespaceDecl *NSD,
                   std::vector<std::string> &Namespaces);
 std::string getTemplateArgumentAsString(const clang::TemplateArgument &Arg,
                                         const clang::ASTContext &Ctx);
+void PrintFullTemplateName(raw_ostream &OS, const PrintingPolicy &Policy, TemplateName Name);
 bool isFromCUDA(const Decl *D);
 namespace clang {
 namespace dpct {
@@ -637,6 +639,8 @@ matchTargetDREInScope(const clang::VarDecl *TargetDecl,
 int isArgumentInitialized(
     const clang::Expr *Arg,
     std::vector<const clang::VarDecl *> &DeclsRequireInit);
+const DeclRefExpr *getAddressedRef(const Expr *E);
+bool isDeviceCopyable(QualType Type, clang::dpct::MigrationRule *Rule);
 } // namespace dpct
 namespace ast_matchers {
 AST_MATCHER_P(DeclRefExpr, isDeclSameAs, const VarDecl *, TargetVD) {

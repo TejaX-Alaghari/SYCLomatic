@@ -25,8 +25,6 @@
 
 using namespace llvm;
 
-extern cl::opt<bool> UseNewDbgInfoFormat;
-
 static std::unique_ptr<Module> parseIR(LLVMContext &C, const char *IR) {
   SMDiagnostic Err;
   std::unique_ptr<Module> Mod = parseAssemblyString(IR, Err, C);
@@ -44,8 +42,6 @@ namespace {
 // by DbgVariableRecords, the dbg.value replacement.
 TEST(BasicBlockDbgInfoTest, InsertAfterSelf) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
       call void @llvm.dbg.value(metadata i16 %a, metadata !9, metadata !DIExpression()), !dbg !11
@@ -72,8 +68,6 @@ TEST(BasicBlockDbgInfoTest, InsertAfterSelf) {
     !11 = !DILocation(line: 1, column: 1, scope: !6)
 )");
 
-  // Convert the module to "new" form debug-info.
-  M->convertToNewDbgValues();
   // Fetch the entry block.
   BasicBlock &BB = M->getFunction("f")->getEntryBlock();
 
@@ -103,16 +97,60 @@ TEST(BasicBlockDbgInfoTest, InsertAfterSelf) {
   EXPECT_TRUE(RetInst->hasDbgRecords());
   auto Range2 = RetInst->getDbgRecordRange();
   EXPECT_EQ(std::distance(Range2.begin(), Range2.end()), 1u);
+}
 
-  M->convertFromNewDbgValues();
+TEST(BasicBlockDbgInfoTest, SplitBasicBlockBefore) {
+  LLVMContext C;
+  std::unique_ptr<Module> M = parseIR(C, R"---(
+    define dso_local void @func() #0 !dbg !10 {
+      %1 = alloca i32, align 4
+      tail call void @llvm.dbg.declare(metadata ptr %1, metadata !14, metadata !DIExpression()), !dbg !16
+      store i32 2, ptr %1, align 4, !dbg !16
+      ret void, !dbg !17
+    }
 
-  UseNewDbgInfoFormat = false;
+    declare void @llvm.dbg.declare(metadata, metadata, metadata) #0
+
+    attributes #0 = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+
+    !llvm.dbg.cu = !{!0}
+    !llvm.module.flags = !{!2, !3, !4, !5, !6, !7, !8}
+    !llvm.ident = !{!9}
+
+    !0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !1, producer: "dummy", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, splitDebugInlining: false, nameTableKind: None)
+    !1 = !DIFile(filename: "dummy", directory: "dummy")
+    !2 = !{i32 7, !"Dwarf Version", i32 5}
+    !3 = !{i32 2, !"Debug Info Version", i32 3}
+    !4 = !{i32 1, !"wchar_size", i32 4}
+    !5 = !{i32 8, !"PIC Level", i32 2}
+    !6 = !{i32 7, !"PIE Level", i32 2}
+    !7 = !{i32 7, !"uwtable", i32 2}
+    !8 = !{i32 7, !"frame-pointer", i32 2}
+    !9 = !{!"dummy"}
+    !10 = distinct !DISubprogram(name: "func", scope: !1, file: !1, line: 1, type: !11, scopeLine: 1, spFlags: DISPFlagDefinition, unit: !0, retainedNodes: !13)
+    !11 = !DISubroutineType(types: !12)
+    !12 = !{null}
+    !13 = !{}
+    !14 = !DILocalVariable(name: "a", scope: !10, file: !1, line: 2, type: !15)
+    !15 = !DIBasicType(name: "int", size: 32, encoding: DW_ATE_signed)
+    !16 = !DILocation(line: 2, column: 6, scope: !10)
+    !17 = !DILocation(line: 3, column: 2, scope: !10)
+  )---");
+  ASSERT_TRUE(M);
+
+  Function *F = M->getFunction("func");
+
+  BasicBlock &BB = F->getEntryBlock();
+  auto I = std::prev(BB.end(), 2);
+  BB.splitBasicBlockBefore(I, "before");
+
+  BasicBlock &BBBefore = F->getEntryBlock();
+  auto I2 = std::prev(BBBefore.end(), 2);
+  ASSERT_TRUE(I2->hasDbgRecords());
 }
 
 TEST(BasicBlockDbgInfoTest, MarkerOperations) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
       call void @llvm.dbg.value(metadata i16 %a, metadata !9, metadata !DIExpression()), !dbg !11
@@ -140,17 +178,15 @@ TEST(BasicBlockDbgInfoTest, MarkerOperations) {
 
   // Fetch the entry block,
   BasicBlock &BB = M->getFunction("f")->getEntryBlock();
-  // Convert the module to "new" form debug-info.
-  M->convertToNewDbgValues();
   EXPECT_EQ(BB.size(), 2u);
 
   // Fetch out our two markers,
   Instruction *Instr1 = &*BB.begin();
   Instruction *Instr2 = Instr1->getNextNode();
-  DPMarker *Marker1 = Instr1->DbgMarker;
-  DPMarker *Marker2 = Instr2->DbgMarker;
+  DbgMarker *Marker1 = Instr1->DebugMarker;
+  DbgMarker *Marker2 = Instr2->DebugMarker;
   // There's no TrailingDbgRecords marker allocated yet.
-  DPMarker *EndMarker = nullptr;
+  DbgMarker *EndMarker = nullptr;
 
   // Check that the "getMarker" utilities operate as expected.
   EXPECT_EQ(BB.getMarker(Instr1->getIterator()), Marker1);
@@ -219,7 +255,7 @@ TEST(BasicBlockDbgInfoTest, MarkerOperations) {
   // Inserting at end(): should dislodge the DbgVariableRecords, if they were
   // dbg.values then they would sit "above" the new instruction.
   Instr1->insertBefore(BB, BB.end());
-  EXPECT_EQ(Instr1->DbgMarker->StoredDbgRecords.size(), 2u);
+  EXPECT_EQ(Instr1->DebugMarker->StoredDbgRecords.size(), 2u);
   // We should de-allocate the trailing marker when something is inserted
   // at end().
   EXPECT_EQ(BB.getTrailingDbgRecords(), nullptr);
@@ -234,19 +270,15 @@ TEST(BasicBlockDbgInfoTest, MarkerOperations) {
   // this be the final instr in the block, and DbgVariableRecords aren't allowed
   // to live off the end forever.
   Instr2->insertBefore(BB, BB.begin());
-  EXPECT_EQ(Instr2->DbgMarker->StoredDbgRecords.size(), 2u);
+  EXPECT_EQ(Instr2->DebugMarker->StoredDbgRecords.size(), 2u);
   EXPECT_EQ(BB.getTrailingDbgRecords(), nullptr);
 
   // Teardown,
   Instr1->insertBefore(BB, BB.begin());
-
-  UseNewDbgInfoFormat = false;
 }
 
 TEST(BasicBlockDbgInfoTest, HeadBitOperations) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
       %b = add i16 %a, 1, !dbg !11
@@ -276,8 +308,6 @@ TEST(BasicBlockDbgInfoTest, HeadBitOperations) {
   // Test that the movement of debug-data when using moveBefore etc and
   // insertBefore etc are governed by the "head" bit of iterators.
   BasicBlock &BB = M->getFunction("f")->getEntryBlock();
-  // Convert the module to "new" form debug-info.
-  M->convertToNewDbgValues();
 
   // Test that the head bit behaves as expected: it should be set when the
   // code wants the _start_ of the block, but not otherwise.
@@ -297,26 +327,27 @@ TEST(BasicBlockDbgInfoTest, HeadBitOperations) {
   Instruction *CInst = BInst->getNextNode();
   Instruction *DInst = CInst->getNextNode();
   // CInst should have debug-info.
-  ASSERT_TRUE(CInst->DbgMarker);
-  EXPECT_FALSE(CInst->DbgMarker->StoredDbgRecords.empty());
+  ASSERT_TRUE(CInst->DebugMarker);
+  EXPECT_FALSE(CInst->DebugMarker->StoredDbgRecords.empty());
 
   // If we move "c" to the start of the block, just normally, then the
   // DbgVariableRecords should fall down to "d".
   CInst->moveBefore(BB, BeginIt2);
-  EXPECT_TRUE(!CInst->DbgMarker || CInst->DbgMarker->StoredDbgRecords.empty());
-  ASSERT_TRUE(DInst->DbgMarker);
-  EXPECT_FALSE(DInst->DbgMarker->StoredDbgRecords.empty());
+  EXPECT_TRUE(!CInst->DebugMarker ||
+              CInst->DebugMarker->StoredDbgRecords.empty());
+  ASSERT_TRUE(DInst->DebugMarker);
+  EXPECT_FALSE(DInst->DebugMarker->StoredDbgRecords.empty());
 
   // Wheras if we move D to the start of the block with moveBeforePreserving,
   // the DbgVariableRecords should move with it.
   DInst->moveBeforePreserving(BB, BB.begin());
-  EXPECT_FALSE(DInst->DbgMarker->StoredDbgRecords.empty());
+  EXPECT_FALSE(DInst->DebugMarker->StoredDbgRecords.empty());
   EXPECT_EQ(&*BB.begin(), DInst);
 
   // Similarly, moveAfterPreserving "D" to "C" should move DbgVariableRecords
   // with "D".
   DInst->moveAfterPreserving(CInst);
-  EXPECT_FALSE(DInst->DbgMarker->StoredDbgRecords.empty());
+  EXPECT_FALSE(DInst->DebugMarker->StoredDbgRecords.empty());
 
   // (move back to the start...)
   DInst->moveBeforePreserving(BB, BB.begin());
@@ -325,8 +356,9 @@ TEST(BasicBlockDbgInfoTest, HeadBitOperations) {
   // If we move "C" to the beginning of the block, it should go before the
   // DbgVariableRecords. They'll stay on "D".
   CInst->moveBefore(BB, BB.begin());
-  EXPECT_TRUE(!CInst->DbgMarker || CInst->DbgMarker->StoredDbgRecords.empty());
-  EXPECT_FALSE(DInst->DbgMarker->StoredDbgRecords.empty());
+  EXPECT_TRUE(!CInst->DebugMarker ||
+              CInst->DebugMarker->StoredDbgRecords.empty());
+  EXPECT_FALSE(DInst->DebugMarker->StoredDbgRecords.empty());
   EXPECT_EQ(&*BB.begin(), CInst);
   EXPECT_EQ(CInst->getNextNode(), DInst);
 
@@ -342,17 +374,14 @@ TEST(BasicBlockDbgInfoTest, HeadBitOperations) {
   // run of dbg.values and the next instruction.
   CInst->moveBefore(BB, DInst->getIterator());
   // CInst gains the DbgVariableRecords.
-  EXPECT_TRUE(!DInst->DbgMarker || DInst->DbgMarker->StoredDbgRecords.empty());
-  EXPECT_FALSE(CInst->DbgMarker->StoredDbgRecords.empty());
+  EXPECT_TRUE(!DInst->DebugMarker ||
+              DInst->DebugMarker->StoredDbgRecords.empty());
+  EXPECT_FALSE(CInst->DebugMarker->StoredDbgRecords.empty());
   EXPECT_EQ(&*BB.begin(), CInst);
-
-  UseNewDbgInfoFormat = false;
 }
 
 TEST(BasicBlockDbgInfoTest, InstrDbgAccess) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
       %b = add i16 %a, 1, !dbg !11
@@ -380,27 +409,25 @@ TEST(BasicBlockDbgInfoTest, InstrDbgAccess) {
 )");
 
   // Check that DbgVariableRecords can be accessed from Instructions without
-  // digging into the depths of DPMarkers.
+  // digging into the depths of DbgMarkers.
   BasicBlock &BB = M->getFunction("f")->getEntryBlock();
-  // Convert the module to "new" form debug-info.
-  M->convertToNewDbgValues();
 
   Instruction *BInst = &*BB.begin();
   Instruction *CInst = BInst->getNextNode();
   Instruction *DInst = CInst->getNextNode();
 
-  ASSERT_FALSE(BInst->DbgMarker);
-  ASSERT_TRUE(CInst->DbgMarker);
-  ASSERT_EQ(CInst->DbgMarker->StoredDbgRecords.size(), 1u);
-  DbgRecord *DVR1 = &*CInst->DbgMarker->StoredDbgRecords.begin();
+  ASSERT_FALSE(BInst->DebugMarker);
+  ASSERT_TRUE(CInst->DebugMarker);
+  ASSERT_EQ(CInst->DebugMarker->StoredDbgRecords.size(), 1u);
+  DbgRecord *DVR1 = &*CInst->DebugMarker->StoredDbgRecords.begin();
   ASSERT_TRUE(DVR1);
   EXPECT_FALSE(BInst->hasDbgRecords());
 
   // Clone DbgVariableRecords from one inst to another. Other arguments to clone
-  // are tested in DPMarker test.
+  // are tested in DbgMarker test.
   auto Range1 = BInst->cloneDebugInfoFrom(CInst);
-  EXPECT_EQ(BInst->DbgMarker->StoredDbgRecords.size(), 1u);
-  DbgRecord *DVR2 = &*BInst->DbgMarker->StoredDbgRecords.begin();
+  EXPECT_EQ(BInst->DebugMarker->StoredDbgRecords.size(), 1u);
+  DbgRecord *DVR2 = &*BInst->DebugMarker->StoredDbgRecords.begin();
   EXPECT_EQ(std::distance(Range1.begin(), Range1.end()), 1u);
   EXPECT_EQ(&*Range1.begin(), DVR2);
   EXPECT_NE(DVR1, DVR2);
@@ -418,14 +445,12 @@ TEST(BasicBlockDbgInfoTest, InstrDbgAccess) {
   // Dropping should be easy,
   BInst->dropDbgRecords();
   EXPECT_FALSE(BInst->hasDbgRecords());
-  EXPECT_EQ(BInst->DbgMarker->StoredDbgRecords.size(), 0u);
+  EXPECT_EQ(BInst->DebugMarker->StoredDbgRecords.size(), 0u);
 
   // And we should be able to drop individual DbgVariableRecords.
   CInst->dropOneDbgRecord(DVR1);
   EXPECT_FALSE(CInst->hasDbgRecords());
-  EXPECT_EQ(CInst->DbgMarker->StoredDbgRecords.size(), 0u);
-
-  UseNewDbgInfoFormat = false;
+  EXPECT_EQ(CInst->DebugMarker->StoredDbgRecords.size(), 0u);
 }
 
 /* Let's recall the big illustration from BasicBlock::spliceDebugInfo:
@@ -518,9 +543,7 @@ protected:
   DbgVariableRecord *DVRA, *DVRB, *DVRConst;
 
   void SetUp() override {
-    UseNewDbgInfoFormat = true;
     M = parseIR(C, SpliceTestIR.c_str());
-    M->convertToNewDbgValues();
 
     BBEntry = &M->getFunction("f")->getEntryBlock();
     BBExit = BBEntry->getNextNode();
@@ -533,21 +556,19 @@ protected:
     CInst = &*Dest;
 
     DVRA =
-        cast<DbgVariableRecord>(&*BInst->DbgMarker->StoredDbgRecords.begin());
-    DVRB =
-        cast<DbgVariableRecord>(&*Branch->DbgMarker->StoredDbgRecords.begin());
+        cast<DbgVariableRecord>(&*BInst->DebugMarker->StoredDbgRecords.begin());
+    DVRB = cast<DbgVariableRecord>(
+        &*Branch->DebugMarker->StoredDbgRecords.begin());
     DVRConst =
-        cast<DbgVariableRecord>(&*CInst->DbgMarker->StoredDbgRecords.begin());
+        cast<DbgVariableRecord>(&*CInst->DebugMarker->StoredDbgRecords.begin());
   }
-
-  void TearDown() override { UseNewDbgInfoFormat = false; }
 
   bool InstContainsDbgVariableRecord(Instruction *I, DbgVariableRecord *DVR) {
     for (DbgRecord &D : I->getDbgRecordRange()) {
       if (&D == DVR) {
         // Confirm too that the links between the records are correct.
-        EXPECT_EQ(DVR->Marker, I->DbgMarker);
-        EXPECT_EQ(I->DbgMarker->MarkedInstr, I);
+        EXPECT_EQ(DVR->Marker, I->DebugMarker);
+        EXPECT_EQ(I->DebugMarker->MarkedInstr, I);
         return true;
       }
     }
@@ -1128,8 +1149,6 @@ metadata !9, metadata !DIExpression()), !dbg !11 Dest      %c = add i16 %b, 1,
 // then the trailing DbgVariableRecords should get flushed back out.
 TEST(BasicBlockDbgInfoTest, DbgSpliceTrailing) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
     entry:
@@ -1160,7 +1179,6 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceTrailing) {
 
   BasicBlock &Entry = M->getFunction("f")->getEntryBlock();
   BasicBlock &Exit = *Entry.getNextNode();
-  M->convertToNewDbgValues();
 
   // Begin by forcing entry block to have dangling DbgVariableRecord.
   Entry.getTerminator()->eraseFromParent();
@@ -1173,20 +1191,16 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceTrailing) {
   // The trailing DbgVariableRecord should have been placed at the front of
   // what's been spliced in.
   Instruction *BInst = &*Entry.begin();
-  ASSERT_TRUE(BInst->DbgMarker);
-  EXPECT_EQ(BInst->DbgMarker->StoredDbgRecords.size(), 1u);
-
-  UseNewDbgInfoFormat = false;
+  ASSERT_TRUE(BInst->DebugMarker);
+  EXPECT_EQ(BInst->DebugMarker->StoredDbgRecords.size(), 1u);
 }
 
 // When we remove instructions from the program, adjacent DbgVariableRecords
-// coalesce together into one DPMarker. In "old" dbg.value mode you could
+// coalesce together into one DbgMarker. In "old" dbg.value mode you could
 // re-insert the removed instruction back into the middle of a sequence of
 // dbg.values. Test that this can be replicated correctly by DbgVariableRecords
 TEST(BasicBlockDbgInfoTest, RemoveInstAndReinsert) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
     entry:
@@ -1214,7 +1228,6 @@ TEST(BasicBlockDbgInfoTest, RemoveInstAndReinsert) {
 )");
 
   BasicBlock &Entry = M->getFunction("f")->getEntryBlock();
-  M->convertToNewDbgValues();
 
   // Fetch the relevant instructions from the converted function.
   Instruction *SubInst = &*Entry.begin();
@@ -1257,16 +1270,12 @@ TEST(BasicBlockDbgInfoTest, RemoveInstAndReinsert) {
   EXPECT_EQ(std::distance(R4.begin(), R4.end()), 1u);
   auto R5 = RetInst->getDbgRecordRange();
   EXPECT_EQ(std::distance(R5.begin(), R5.end()), 1u);
-
-  UseNewDbgInfoFormat = false;
 }
 
 // Test instruction removal and re-insertion, this time with one
 // DbgVariableRecord that should hop up one instruction.
 TEST(BasicBlockDbgInfoTest, RemoveInstAndReinsertForOneDbgVariableRecord) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
     entry:
@@ -1293,7 +1302,6 @@ TEST(BasicBlockDbgInfoTest, RemoveInstAndReinsertForOneDbgVariableRecord) {
 )");
 
   BasicBlock &Entry = M->getFunction("f")->getEntryBlock();
-  M->convertToNewDbgValues();
 
   // Fetch the relevant instructions from the converted function.
   Instruction *SubInst = &*Entry.begin();
@@ -1332,8 +1340,6 @@ TEST(BasicBlockDbgInfoTest, RemoveInstAndReinsertForOneDbgVariableRecord) {
   EXPECT_FALSE(RetInst->hasDbgRecords());
   auto R3 = AddInst->getDbgRecordRange();
   EXPECT_EQ(std::distance(R3.begin(), R3.end()), 1u);
-
-  UseNewDbgInfoFormat = false;
 }
 
 // Similar to the above, what if we splice into an empty block with debug-info,
@@ -1342,8 +1348,6 @@ TEST(BasicBlockDbgInfoTest, RemoveInstAndReinsertForOneDbgVariableRecord) {
 // of the i16 0 dbg.value.
 TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty1) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
     entry:
@@ -1377,7 +1381,6 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty1) {
   Function &F = *M->getFunction("f");
   BasicBlock &Entry = F.getEntryBlock();
   BasicBlock &Exit = *Entry.getNextNode();
-  M->convertToNewDbgValues();
 
   // Begin by forcing entry block to have dangling DbgVariableRecord.
   Entry.getTerminator()->eraseFromParent();
@@ -1392,7 +1395,7 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty1) {
   // should be in the correct order of %a, then 0.
   Instruction *BInst = &*Entry.begin();
   ASSERT_TRUE(BInst->hasDbgRecords());
-  EXPECT_EQ(BInst->DbgMarker->StoredDbgRecords.size(), 2u);
+  EXPECT_EQ(BInst->DebugMarker->StoredDbgRecords.size(), 2u);
   SmallVector<DbgVariableRecord *, 2> DbgVariableRecords;
   for (DbgRecord &DVR : BInst->getDbgRecordRange())
     DbgVariableRecords.push_back(cast<DbgVariableRecord>(&DVR));
@@ -1404,16 +1407,12 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty1) {
 
   // No trailing DbgVariableRecords in the entry block now.
   EXPECT_EQ(Entry.getTrailingDbgRecords(), nullptr);
-
-  UseNewDbgInfoFormat = false;
 }
 
 // Similar test again, but this time: splice the contents of exit into entry,
 // with the intention of leaving the first dbg.value (i16 0) behind.
 TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty2) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
     entry:
@@ -1447,7 +1446,6 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty2) {
   Function &F = *M->getFunction("f");
   BasicBlock &Entry = F.getEntryBlock();
   BasicBlock &Exit = *Entry.getNextNode();
-  M->convertToNewDbgValues();
 
   // Begin by forcing entry block to have dangling DbgVariableRecord.
   Entry.getTerminator()->eraseFromParent();
@@ -1462,7 +1460,7 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty2) {
   // We should now have one dbg.values on the first instruction, %a.
   Instruction *BInst = &*Entry.begin();
   ASSERT_TRUE(BInst->hasDbgRecords());
-  EXPECT_EQ(BInst->DbgMarker->StoredDbgRecords.size(), 1u);
+  EXPECT_EQ(BInst->DebugMarker->StoredDbgRecords.size(), 1u);
   SmallVector<DbgVariableRecord *, 2> DbgVariableRecords;
   for (DbgRecord &DVR : BInst->getDbgRecordRange())
     DbgVariableRecords.push_back(cast<DbgVariableRecord>(&DVR));
@@ -1478,16 +1476,12 @@ TEST(BasicBlockDbgInfoTest, DbgSpliceToEmpty2) {
   EXPECT_FALSE(Exit.getTrailingDbgRecords()->empty());
   Exit.getTrailingDbgRecords()->eraseFromParent();
   Exit.deleteTrailingDbgRecords();
-
-  UseNewDbgInfoFormat = false;
 }
 
 // What if we moveBefore end() -- there might be no debug-info there, in which
 // case we shouldn't crash.
 TEST(BasicBlockDbgInfoTest, DbgMoveToEnd) {
   LLVMContext C;
-  UseNewDbgInfoFormat = true;
-
   std::unique_ptr<Module> M = parseIR(C, R"(
     define i16 @f(i16 %a) !dbg !6 {
     entry:
@@ -1517,7 +1511,6 @@ TEST(BasicBlockDbgInfoTest, DbgMoveToEnd) {
   Function &F = *M->getFunction("f");
   BasicBlock &Entry = F.getEntryBlock();
   BasicBlock &Exit = *Entry.getNextNode();
-  M->convertToNewDbgValues();
 
   // Move the return to the end of the entry block.
   Instruction *Br = Entry.getTerminator();
@@ -1530,8 +1523,6 @@ TEST(BasicBlockDbgInfoTest, DbgMoveToEnd) {
   EXPECT_EQ(Entry.getTrailingDbgRecords(), nullptr);
   EXPECT_EQ(Exit.getTrailingDbgRecords(), nullptr);
   EXPECT_FALSE(Ret->hasDbgRecords());
-
-  UseNewDbgInfoFormat = false;
 }
 
 } // End anonymous namespace.

@@ -15,14 +15,12 @@
 #include <sycl/detail/export.hpp>
 #include <sycl/detail/info_desc_helpers.hpp>
 #include <sycl/detail/owner_less_base.hpp>
-#include <sycl/detail/pi.h>
-#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
 #include <sycl/detail/string.hpp>
 #include <sycl/detail/string_view.hpp>
-#endif
 #include <sycl/detail/util.hpp>
 #include <sycl/device_selector.hpp>
 #include <sycl/info/info_desc.hpp>
+#include <ur_api.h>
 
 #ifdef __SYCL_INTERNAL_API
 #include <sycl/detail/cl.h>
@@ -58,7 +56,6 @@ class platform_impl;
 void __SYCL_EXPORT enable_ext_oneapi_default_context(bool Val);
 
 template <typename ParamT> auto convert_to_abi_neutral(ParamT &&Info) {
-#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
   using ParamNoRef = std::remove_reference_t<ParamT>;
   if constexpr (std::is_same_v<ParamNoRef, std::string>) {
     return detail::string{Info};
@@ -72,13 +69,9 @@ template <typename ParamT> auto convert_to_abi_neutral(ParamT &&Info) {
   } else {
     return std::forward<ParamT>(Info);
   }
-#else
-  return std::forward<ParamT>(Info);
-#endif
 }
 
 template <typename ParamT> auto convert_from_abi_neutral(ParamT &&Info) {
-#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
   using ParamNoRef = std::remove_reference_t<ParamT>;
   if constexpr (std::is_same_v<ParamNoRef, detail::string>) {
     return Info.c_str();
@@ -93,9 +86,6 @@ template <typename ParamT> auto convert_from_abi_neutral(ParamT &&Info) {
   } else {
     return std::forward<ParamT>(Info);
   }
-#else
-  return std::forward<ParamT>(Info);
-#endif
 }
 } // namespace detail
 namespace ext::oneapi {
@@ -167,14 +157,9 @@ public:
   /// \return true if specified extension is supported by this SYCL platform.
   __SYCL2020_DEPRECATED(
       "use platform::has() function with aspects APIs instead")
-  bool has_extension(const std::string &ExtensionName) const;
-
-  /// Checks if this SYCL platform is a host platform.
-  ///
-  /// \return true if this SYCL platform is a host platform.
-  __SYCL2020_DEPRECATED(
-      "is_host() is deprecated as the host device is no longer supported.")
-  bool is_host() const;
+  bool has_extension(const std::string &ExtensionName) const {
+    return has_extension(detail::string_view{ExtensionName});
+  }
 
   /// Returns all SYCL devices associated with this platform.
   ///
@@ -190,17 +175,18 @@ public:
   /// Queries this SYCL platform for info.
   ///
   /// The return type depends on information being queried.
-#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
   template <typename Param>
   typename detail::is_platform_info_desc<Param>::return_type get_info() const {
     return detail::convert_from_abi_neutral(get_info_impl<Param>());
   }
-#else
+
+  /// Queries this SYCL platform for SYCL backend-specific info.
+  ///
+  /// The return type depends on information being queried.
   template <typename Param>
-  detail::ABINeutralT_t<
-      typename detail::is_platform_info_desc<Param>::return_type>
-  get_info() const;
-#endif
+  typename detail::is_backend_info_desc<Param>::return_type
+  get_backend_info() const;
+
   /// Returns all available SYCL platforms in the system.
   ///
   /// The resulting vector always contains a single SYCL host platform instance.
@@ -245,7 +231,7 @@ public:
   std::vector<device> ext_oneapi_get_composite_devices() const;
 
 private:
-  pi_native_handle getNative() const;
+  ur_native_handle_t getNative() const;
 
   std::shared_ptr<detail::platform_impl> impl;
   platform(std::shared_ptr<detail::platform_impl> impl) : impl(impl) {}
@@ -255,18 +241,19 @@ private:
   template <class T>
   friend T detail::createSyclObjFromImpl(decltype(T::impl) ImplObj);
   template <class Obj>
-  friend decltype(Obj::impl) detail::getSyclObjImpl(const Obj &SyclObject);
+  friend const decltype(Obj::impl) &
+  detail::getSyclObjImpl(const Obj &SyclObject);
 
   template <backend BackendName, class SyclObjectT>
   friend auto get_native(const SyclObjectT &Obj)
       -> backend_return_t<BackendName, SyclObjectT>;
 
-#ifdef __INTEL_PREVIEW_BREAKING_CHANGES
   template <typename Param>
   typename detail::ABINeutralT_t<
       typename detail::is_platform_info_desc<Param>::return_type>
   get_info_impl() const;
-#endif
+
+  bool has_extension(detail::string_view ExtensionName) const;
 }; // class platform
 } // namespace _V1
 } // namespace sycl

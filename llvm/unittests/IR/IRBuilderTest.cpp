@@ -922,7 +922,7 @@ TEST_F(IRBuilderTest, DIBuilder) {
     DILabel *Label =
         DIB.createLabel(BarScope, "badger", File, 1, /*AlwaysPreserve*/ false);
 
-    { /* dbg.label | DPLabel */
+    { /* dbg.label | DbgLabelRecord */
       // Insert before I and check order.
       ExpectOrder(DIB.insertLabel(Label, LabelLoc, I), I->getIterator());
 
@@ -931,7 +931,7 @@ TEST_F(IRBuilderTest, DIBuilder) {
       // inserted into the block untill another instruction is added.
       DbgInstPtr LabelRecord = DIB.insertLabel(Label, LabelLoc, BB);
       // Specifically do not insert a terminator, to check this works. `I`
-      // should have absorbed the DPLabel in the new debug info mode.
+      // should have absorbed the DbgLabelRecord in the new debug info mode.
       I = Builder.CreateAlloca(Builder.getInt32Ty());
       ExpectOrder(LabelRecord, I->getIterator());
     }
@@ -994,17 +994,17 @@ TEST_F(IRBuilderTest, DIBuilder) {
     EXPECT_TRUE(verifyModule(*M));
   };
 
-  // Test in old-debug mode.
-  EXPECT_FALSE(M->IsNewDbgInfoFormat);
+  // Test in new-debug mode.
+  EXPECT_TRUE(M->IsNewDbgInfoFormat);
   RunTest();
 
-  // Test in new-debug mode.
-  // Reset the test then call convertToNewDbgValues to flip the flag
+  // Test in old-debug mode.
+  // Reset the test then call convertFromNewDbgValues to flip the flag
   // on the test's Module, Function and BasicBlock.
   TearDown();
   SetUp();
-  M->convertToNewDbgValues();
-  EXPECT_TRUE(M->IsNewDbgInfoFormat);
+  M->convertFromNewDbgValues();
+  EXPECT_FALSE(M->IsNewDbgInfoFormat);
   RunTest();
 }
 

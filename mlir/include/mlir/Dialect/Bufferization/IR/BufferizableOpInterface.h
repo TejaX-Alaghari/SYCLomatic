@@ -309,6 +309,11 @@ struct BufferizationOptions {
   /// bufferized or not.
   bool bufferizeFunctionBoundaries = false;
 
+  // Specifies whether to account for parallel regions in RaW analysis. If true,
+  // then writes inside of parallel regions that write to buffers defined
+  // outside of the parallel region will be given a new buffer.
+  bool checkParallelRegions = true;
+
   /// Certain ops have aliasing OpOperand/OpResult invariants (e.g., scf.for).
   /// If this flag is set to `false`, those invariants are no longer enforced
   /// with buffer copies.
@@ -365,10 +370,6 @@ struct BufferizationOptions {
   // failure to determine memory space for a tensor type).
   DefaultMemorySpaceFn defaultMemorySpaceFn =
       [](TensorType t) -> std::optional<Attribute> { return Attribute(); };
-
-  /// Seed for the analysis fuzzer. If set to `0`, the fuzzer is deactivated.
-  /// Should be used only with `testAnalysisOnly = true`.
-  unsigned analysisFuzzerSeed = 0;
 
   /// If set to `true`, the analysis is skipped. A buffer is copied before every
   /// write. This flag cannot be used together with `testAnalysisOnly = true`.

@@ -111,7 +111,7 @@ void MapNames::setExplicitNamespaceMap() {
       {"cudaPointerAttributes",
        std::make_shared<TypeNameRule>(getDpctNamespace() + "pointer_attributes",
                                       HelperFeatureEnum::device_ext)},
-      {"dim3", std::make_shared<TypeNameRule>(getClNamespace() + "range<3>")},
+      {"dim3", std::make_shared<TypeNameRule>(getDpctNamespace() + "dim3")},
       {"int2", std::make_shared<TypeNameRule>(getClNamespace() + "int2")},
       {"double2", std::make_shared<TypeNameRule>(getClNamespace() + "double2")},
       {"__half", std::make_shared<TypeNameRule>(getClNamespace() + "half")},
@@ -200,8 +200,8 @@ void MapNames::setExplicitNamespaceMap() {
       {"cublasDataType_t",
        std::make_shared<TypeNameRule>(getDpctNamespace() + "library_data_t",
                                       HelperFeatureEnum::device_ext)},
-      {"cublasComputeType_t", std::make_shared<TypeNameRule>(
-                                  getDpctNamespace() + "blas::compute_type")},
+      {"cublasComputeType_t",
+       std::make_shared<TypeNameRule>(getDpctNamespace() + "compute_type")},
       {"cuComplex",
        std::make_shared<TypeNameRule>(getClNamespace() + "float2")},
       {"cuFloatComplex",
@@ -361,9 +361,14 @@ void MapNames::setExplicitNamespaceMap() {
        std::make_shared<TypeNameRule>("std::shared_ptr<" + getDpctNamespace() +
                                           "sparse::matrix_info>",
                                       HelperFeatureEnum::device_ext)},
-      {"cusparseHandle_t",
-       std::make_shared<TypeNameRule>(getDpctNamespace() + "queue_ptr")},
+      {"cusparseHandle_t", std::make_shared<TypeNameRule>(
+                               getDpctNamespace() + "sparse::descriptor_ptr")},
       {"cudaMemoryAdvise", std::make_shared<TypeNameRule>("int")},
+      {"cudaStreamCaptureStatus",
+       std::make_shared<TypeNameRule>(
+           DpctGlobalInfo::useExtGraph()
+               ? getClNamespace() + "ext::oneapi::experimental::queue_state"
+               : "cudaStreamCaptureStatus")},
       {"CUmem_advise", std::make_shared<TypeNameRule>("int")},
       {"cudaPos", std::make_shared<TypeNameRule>(getClNamespace() + "id<3>")},
       {"cudaExtent",
@@ -373,9 +378,25 @@ void MapNames::setExplicitNamespaceMap() {
                                       HelperFeatureEnum::device_ext)},
       {"cudaMemcpyKind",
        std::make_shared<TypeNameRule>(getDpctNamespace() + "memcpy_direction")},
+      {"CUDA_ARRAY3D_DESCRIPTOR",
+       std::make_shared<TypeNameRule>(
+           DpctGlobalInfo::useExtBindlessImages()
+               ? getClNamespace() +
+                     "ext::oneapi::experimental::image_descriptor"
+               : getDpctNamespace() + "image_matrix_desc")},
+      {"CUDA_ARRAY_DESCRIPTOR",
+       std::make_shared<TypeNameRule>(
+           DpctGlobalInfo::useExtBindlessImages()
+               ? getClNamespace() +
+                     "ext::oneapi::experimental::image_descriptor"
+               : getDpctNamespace() + "image_matrix_desc")},
       {"cudaMemcpy3DParms",
        std::make_shared<TypeNameRule>(getDpctNamespace() + "memcpy_parameter")},
       {"CUDA_MEMCPY3D",
+       std::make_shared<TypeNameRule>(getDpctNamespace() + "memcpy_parameter")},
+      {"cudaMemcpy3DPeerParms",
+       std::make_shared<TypeNameRule>(getDpctNamespace() + "memcpy_parameter")},
+      {"CUDA_MEMCPY3D_PEER",
        std::make_shared<TypeNameRule>(getDpctNamespace() + "memcpy_parameter")},
       {"CUDA_MEMCPY2D",
        std::make_shared<TypeNameRule>(getDpctNamespace() + "memcpy_parameter")},
@@ -400,11 +421,17 @@ void MapNames::setExplicitNamespaceMap() {
                           HelperFeatureEnum::device_ext)},
       {"CUdevice", std::make_shared<TypeNameRule>("int")},
       {"CUarray_st",
-       std::make_shared<TypeNameRule>(getDpctNamespace() + "image_matrix",
-                                      HelperFeatureEnum::device_ext)},
+       std::make_shared<TypeNameRule>(
+           DpctGlobalInfo::useExtBindlessImages()
+               ? getDpctNamespace() + "experimental::image_mem_wrapper"
+               : getDpctNamespace() + "image_matrix",
+           HelperFeatureEnum::device_ext)},
       {"CUarray",
-       std::make_shared<TypeNameRule>(getDpctNamespace() + "image_matrix_p",
-                                      HelperFeatureEnum::device_ext)},
+       std::make_shared<TypeNameRule>(
+           DpctGlobalInfo::useExtBindlessImages()
+               ? getDpctNamespace() + "experimental::image_mem_wrapper_ptr"
+               : getDpctNamespace() + "image_matrix_p",
+           HelperFeatureEnum::device_ext)},
       {"CUarray_format",
        std::make_shared<TypeNameRule>(getClNamespace() + "image_channel_type")},
       {"CUarray_format_enum",
@@ -439,7 +466,10 @@ void MapNames::setExplicitNamespaceMap() {
        std::make_shared<TypeNameRule>(getDpctNamespace() + "image_data_type",
                                       HelperFeatureEnum::device_ext)},
       {"CUtexref", std::make_shared<TypeNameRule>(
-                       getDpctNamespace() + "image_wrapper_base_p",
+                       DpctGlobalInfo::useExtBindlessImages()
+                           ? getDpctNamespace() +
+                                 "experimental::bindless_image_wrapper_base_p"
+                           : getDpctNamespace() + "image_wrapper_base_p",
                        HelperFeatureEnum::device_ext)},
       {"cudaDeviceAttr", std::make_shared<TypeNameRule>("int")},
       {"__nv_bfloat16", std::make_shared<TypeNameRule>(
@@ -517,6 +547,39 @@ void MapNames::setExplicitNamespaceMap() {
       {"cudaLaunchAttributeValue", std::make_shared<TypeNameRule>("int")},
       {"cusparseSpSMDescr_t", std::make_shared<TypeNameRule>("int")},
       {"cusparseSpSMAlg_t", std::make_shared<TypeNameRule>("int")},
+      {"cublasLtHandle_t",
+       std::make_shared<TypeNameRule>(
+           getDpctNamespace() + "blas_gemm::experimental::descriptor_ptr")},
+      {"cublasLtMatmulDesc_t",
+       std::make_shared<TypeNameRule>(
+           getDpctNamespace() + "blas_gemm::experimental::matmul_desc_ptr")},
+      {"cublasLtOrder_t",
+       std::make_shared<TypeNameRule>(getDpctNamespace() +
+                                      "blas_gemm::experimental::order_t")},
+      {"cublasLtPointerMode_t",
+       std::make_shared<TypeNameRule>(
+           getDpctNamespace() + "blas_gemm::experimental::pointer_mode_t")},
+      {"cublasLtMatrixLayout_t",
+       std::make_shared<TypeNameRule>(
+           getDpctNamespace() + "blas_gemm::experimental::matrix_layout_ptr")},
+      {"cublasLtMatrixLayoutAttribute_t",
+       std::make_shared<TypeNameRule>(
+           getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::attribute")},
+      {"cublasLtMatmulDescAttributes_t",
+       std::make_shared<TypeNameRule>(
+           getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute")},
+      {"cublasLtMatmulAlgo_t", std::make_shared<TypeNameRule>("int")},
+      {"cublasLtEpilogue_t",
+       std::make_shared<TypeNameRule>(getDpctNamespace() +
+                                      "blas_gemm::experimental::epilogue_t")},
+      {"cublasLtMatmulPreference_t", std::make_shared<TypeNameRule>("int")},
+      {"cublasLtMatmulHeuristicResult_t",
+       std::make_shared<TypeNameRule>("int")},
+      {"cublasLtMatrixTransformDesc_t",
+       std::make_shared<TypeNameRule>(
+           getDpctNamespace() + "blas_gemm::experimental::transform_desc_ptr")},
       // ...
   };
 
@@ -1034,6 +1097,21 @@ void MapNames::setExplicitNamespaceMap() {
        std::make_shared<EnumNameRule>("0")},
       {"cudaMemAdviseSetAccessedBy", std::make_shared<EnumNameRule>("0")},
       {"cudaMemAdviseUnsetAccessedBy", std::make_shared<EnumNameRule>("0")},
+      // enum cudaStreamCaptureStatus
+      {"cudaStreamCaptureStatusNone",
+       std::make_shared<EnumNameRule>(
+           DpctGlobalInfo::useExtGraph()
+               ? getClNamespace() +
+                     "ext::oneapi::experimental::queue_state::executing"
+               : "cudaStreamCaptureStatusNone")},
+      {"cudaStreamCaptureStatusActive",
+       std::make_shared<EnumNameRule>(
+           DpctGlobalInfo::useExtGraph()
+               ? getClNamespace() +
+                     "ext::oneapi::experimental::queue_state::recording"
+               : "cudaStreamCaptureStatusActive")},
+      {"cudaStreamCaptureStatusInvalidated",
+       std::make_shared<EnumNameRule>("cudaStreamCaptureStatusInvalidated")},
       // enum CUmem_advise_enum
       {"CU_MEM_ADVISE_SET_READ_MOSTLY", std::make_shared<EnumNameRule>("0")},
       {"CU_MEM_ADVISE_UNSET_READ_MOSTLY", std::make_shared<EnumNameRule>("0")},
@@ -1236,40 +1314,6 @@ void MapNames::setExplicitNamespaceMap() {
       {"CUDA_R_8F_E5M2",
        std::make_shared<EnumNameRule>(getDpctNamespace() +
                                       "library_data_t::real_f8_e5m2")},
-      // cublasComputeType_t
-      {"CUBLAS_COMPUTE_16F",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f16")},
-      {"CUBLAS_COMPUTE_16F_PEDANTIC",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f16_standard")},
-      {"CUBLAS_COMPUTE_32F",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f32")},
-      {"CUBLAS_COMPUTE_32F_PEDANTIC",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f32_standard")},
-      {"CUBLAS_COMPUTE_32F_FAST_16F",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f32")},
-      {"CUBLAS_COMPUTE_32F_FAST_16BF",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f32_fast_bf16")},
-      {"CUBLAS_COMPUTE_32F_FAST_TF32",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f32_fast_tf32")},
-      {"CUBLAS_COMPUTE_64F",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f64")},
-      {"CUBLAS_COMPUTE_64F_PEDANTIC",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::f64_standard")},
-      {"CUBLAS_COMPUTE_32I",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::i32")},
-      {"CUBLAS_COMPUTE_32I_PEDANTIC",
-       std::make_shared<EnumNameRule>(getDpctNamespace() +
-                                      "blas::compute_type::i32_standard")},
       {"cuda::thread_scope_system",
        std::make_shared<EnumNameRule>(getClNamespace() +
                                       "memory_scope::system")},
@@ -1423,6 +1467,129 @@ void MapNames::setExplicitNamespaceMap() {
        getDpctNamespace() + "blas::math_mode::mm_tf32"},
       {"CUBLAS_MATH_DISALLOW_REDUCED_PRECISION_REDUCTION",
        getDpctNamespace() + "blas::math_mode::mm_default"},
+      {"CUBLASLT_ORDER_COL",
+       getDpctNamespace() + "blas_gemm::experimental::order_t::col"},
+      {"CUBLASLT_ORDER_ROW",
+       getDpctNamespace() + "blas_gemm::experimental::order_t::row"},
+      {"CUBLASLT_ORDER_COL32",
+       getDpctNamespace() + "blas_gemm::experimental::order_t::col32"},
+      {"CUBLASLT_ORDER_COL4_4R2_8C",
+       getDpctNamespace() + "blas_gemm::experimental::order_t::col4_4r2_8c"},
+      {"CUBLASLT_ORDER_COL32_2R_4R4",
+       getDpctNamespace() + "blas_gemm::experimental::order_t::col32_2r_4r4"},
+      {"CUBLASLT_POINTER_MODE_HOST",
+       getDpctNamespace() + "blas_gemm::experimental::pointer_mode_t::host"},
+      {"CUBLASLT_POINTER_MODE_DEVICE",
+       getDpctNamespace() + "blas_gemm::experimental::pointer_mode_t::device"},
+      {"CUBLASLT_POINTER_MODE_DEVICE_VECTOR",
+       getDpctNamespace() +
+           "blas_gemm::experimental::pointer_mode_t::device_vector"},
+      {"CUBLASLT_POINTER_MODE_ALPHA_DEVICE_VECTOR_BETA_ZERO",
+       getDpctNamespace() + "blas_gemm::experimental::pointer_mode_t::alpha_"
+                            "device_vector_beta_zero"},
+      {"CUBLASLT_POINTER_MODE_ALPHA_DEVICE_VECTOR_BETA_HOST",
+       getDpctNamespace() + "blas_gemm::experimental::pointer_mode_t::alpha_"
+                            "device_vector_beta_host"},
+      {"CUBLASLT_MATRIX_LAYOUT_TYPE",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::attribute::type"},
+      {"CUBLASLT_MATRIX_LAYOUT_ORDER",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::attribute::order"},
+      {"CUBLASLT_MATRIX_LAYOUT_ROWS",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::attribute::rows"},
+      {"CUBLASLT_MATRIX_LAYOUT_COLS",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::attribute::cols"},
+      {"CUBLASLT_MATRIX_LAYOUT_LD",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::attribute::ld"},
+      {"CUBLASLT_MATMUL_DESC_COMPUTE_TYPE",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::compute_type"},
+      {"CUBLASLT_MATMUL_DESC_SCALE_TYPE",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::scale_type"},
+      {"CUBLASLT_MATMUL_DESC_POINTER_MODE",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::pointer_mode"},
+      {"CUBLASLT_MATMUL_DESC_TRANSA",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::trans_a"},
+      {"CUBLASLT_MATMUL_DESC_TRANSB",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::trans_b"},
+      {"CUBLASLT_MATMUL_DESC_TRANSC",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::trans_c"},
+      {"CUBLASLT_MATMUL_DESC_EPILOGUE",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::epilogue"},
+      {"CUBLASLT_MATMUL_DESC_SM_COUNT_TARGET",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::unsupport"},
+      {"CUBLASLT_MATMUL_DESC_FAST_ACCUM",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::unsupport"},
+      {"CUBLASLT_MATMUL_DESC_A_SCALE_POINTER",
+       getDpctNamespace() + "blas_gemm::experimental::matmul_desc_t::attribute:"
+                            ":a_scale_pointer"},
+      {"CUBLASLT_MATMUL_DESC_B_SCALE_POINTER",
+       getDpctNamespace() + "blas_gemm::experimental::matmul_desc_t::attribute:"
+                            ":b_scale_pointer"},
+      {"CUBLASLT_MATMUL_DESC_D_SCALE_POINTER",
+       getDpctNamespace() + "blas_gemm::experimental::matmul_desc_t::attribute:"
+                            ":d_scale_pointer"},
+      {"CUBLASLT_MATMUL_DESC_AMAX_D_POINTER",
+       getDpctNamespace() + "blas_gemm::experimental::matmul_desc_t::attribute:"
+                            ":absmax_d_pointer"},
+      {"CUBLASLT_MATMUL_DESC_ATOMIC_SYNC_NUM_CHUNKS_D_ROWS",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::unsupport"},
+      {"CUBLASLT_MATMUL_DESC_ATOMIC_SYNC_NUM_CHUNKS_D_COLS",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::unsupport"},
+      {"CUBLASLT_MATMUL_DESC_ATOMIC_SYNC_OUT_COUNTERS_POINTER",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::unsupport"},
+      {"CUBLASLT_MATMUL_DESC_ATOMIC_SYNC_IN_COUNTERS_POINTER",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::attribute::unsupport"},
+      {"CUBLASLT_EPILOGUE_DEFAULT",
+       getDpctNamespace() + "blas_gemm::experimental::epilogue_t::nop"},
+      {"CUBLASLT_EPILOGUE_RELU",
+       getDpctNamespace() + "blas_gemm::experimental::epilogue_t::relu"},
+      {"CUBLASLT_MATRIX_TRANSFORM_DESC_SCALE_TYPE",
+       getDpctNamespace() +
+           "blas_gemm::experimental::transform_desc_t::attribute::scale_type"},
+      {"CUBLASLT_MATRIX_TRANSFORM_DESC_POINTER_MODE",
+       getDpctNamespace() + "blas_gemm::experimental::transform_desc_t::"
+                            "attribute::pointer_mode"},
+      {"CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSA",
+       getDpctNamespace() +
+           "blas_gemm::experimental::transform_desc_t::attribute::trans_a"},
+      {"CUBLASLT_MATRIX_TRANSFORM_DESC_TRANSB",
+       getDpctNamespace() +
+           "blas_gemm::experimental::transform_desc_t::attribute::trans_b"},
+      // cublasComputeType_t
+      {"CUBLAS_COMPUTE_16F", getDpctNamespace() + "compute_type::f16"},
+      {"CUBLAS_COMPUTE_16F_PEDANTIC",
+       getDpctNamespace() + "compute_type::f16_standard"},
+      {"CUBLAS_COMPUTE_32F", getDpctNamespace() + "compute_type::f32"},
+      {"CUBLAS_COMPUTE_32F_PEDANTIC",
+       getDpctNamespace() + "compute_type::f32_standard"},
+      {"CUBLAS_COMPUTE_32F_FAST_16F", getDpctNamespace() + "compute_type::f32"},
+      {"CUBLAS_COMPUTE_32F_FAST_16BF",
+       getDpctNamespace() + "compute_type::f32_fast_bf16"},
+      {"CUBLAS_COMPUTE_32F_FAST_TF32",
+       getDpctNamespace() + "compute_type::f32_fast_tf32"},
+      {"CUBLAS_COMPUTE_64F", getDpctNamespace() + "compute_type::f64"},
+      {"CUBLAS_COMPUTE_64F_PEDANTIC",
+       getDpctNamespace() + "compute_type::f64_standard"},
+      {"CUBLAS_COMPUTE_32I", getDpctNamespace() + "compute_type::i32"},
+      {"CUBLAS_COMPUTE_32I_PEDANTIC",
+       getDpctNamespace() + "compute_type::i32_standard"},
   };
 
   ClassFieldMap = {};
@@ -1698,9 +1865,14 @@ void MapNames::setExplicitNamespaceMap() {
       {"cublasDgeqrfBatched", getDpctNamespace() + "geqrf_batch_wrapper"},
       {"cublasCgeqrfBatched", getDpctNamespace() + "geqrf_batch_wrapper"},
       {"cublasZgeqrfBatched", getDpctNamespace() + "geqrf_batch_wrapper"},
+      {"cublasSgelsBatched", getDpctNamespace() + "gels_batch_wrapper"},
+      {"cublasDgelsBatched", getDpctNamespace() + "gels_batch_wrapper"},
+      {"cublasCgelsBatched", getDpctNamespace() + "gels_batch_wrapper"},
+      {"cublasZgelsBatched", getDpctNamespace() + "gels_batch_wrapper"},
       {"cublasGetStatusString", ""},
       {"cublasCgemm3m", "oneapi::mkl::blas::column_major::gemm"},
       {"cublasZgemm3m", "oneapi::mkl::blas::column_major::gemm"},
+      {"cublasHgemm_64", "oneapi::mkl::blas::column_major::gemm"},
       {"cublasSgemm_v2_64", "oneapi::mkl::blas::column_major::gemm"},
       {"cublasDgemm_v2_64", "oneapi::mkl::blas::column_major::gemm"},
       {"cublasCgemm_v2_64", "oneapi::mkl::blas::column_major::gemm"},
@@ -1893,6 +2065,68 @@ void MapNames::setExplicitNamespaceMap() {
       {"cublasDtpsv_v2_64", "oneapi::mkl::blas::column_major::tpsv"},
       {"cublasCtpsv_v2_64", "oneapi::mkl::blas::column_major::tpsv"},
       {"cublasZtpsv_v2_64", "oneapi::mkl::blas::column_major::tpsv"},
+      {"cublasCgemm3m_64", "oneapi::mkl::blas::column_major::gemm"},
+      {"cublasZgemm3m_64", "oneapi::mkl::blas::column_major::gemm"},
+      {"cublasSsyrkx_64", getDpctNamespace() + "blas::syrk"},
+      {"cublasDsyrkx_64", getDpctNamespace() + "blas::syrk"},
+      {"cublasCsyrkx_64", getDpctNamespace() + "blas::syrk"},
+      {"cublasZsyrkx_64", getDpctNamespace() + "blas::syrk"},
+      {"cublasCherkx_64", getDpctNamespace() + "blas::herk"},
+      {"cublasZherkx_64", getDpctNamespace() + "blas::herk"},
+      {"cublasStrmm_v2_64", getDpctNamespace() + "blas::trmm"},
+      {"cublasDtrmm_v2_64", getDpctNamespace() + "blas::trmm"},
+      {"cublasCtrmm_v2_64", getDpctNamespace() + "blas::trmm"},
+      {"cublasZtrmm_v2_64", getDpctNamespace() + "blas::trmm"},
+      // cublasLt
+      {"cublasLtCreate",
+       "new " + getDpctNamespace() + "blas_gemm::experimental::descriptor"},
+      {"cublasLtDestroy",
+       "delete " + getDpctNamespace() + "blas_gemm::experimental::descriptor"},
+      {"cublasLtMatmulDescCreate",
+       "new " + getDpctNamespace() + "blas_gemm::experimental::matmul_desc_t"},
+      {"cublasLtMatmulDescDestroy",
+       "delete " + getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t"},
+      {"cublasLtMatmulDescSetAttribute",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::set_attribute"},
+      {"cublasLtMatmulDescGetAttribute",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matmul_desc_t::get_attribute"},
+      {"cublasLtMatrixLayoutCreate",
+       "new " + getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t"},
+      {"cublasLtMatrixLayoutDestroy",
+       "delete " + getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t"},
+      {"cublasLtMatrixLayoutSetAttribute",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::set_attribute"},
+      {"cublasLtMatrixLayoutGetAttribute",
+       getDpctNamespace() +
+           "blas_gemm::experimental::matrix_layout_t::get_attribute"},
+      {"cublasLtMatmul",
+       getDpctNamespace() + "blas_gemm::experimental::matmul"},
+      {"cublasLtMatmulPreferenceCreate", ""},
+      {"cublasLtMatmulPreferenceDestroy", ""},
+      {"cublasLtMatmulPreferenceSetAttribute", ""},
+      {"cublasLtMatmulPreferenceGetAttribute", ""},
+      {"cublasLtMatmulAlgoGetHeuristic", ""},
+      {"cublasLtMatrixTransformDescCreate",
+       "new " + getDpctNamespace() +
+           "blas_gemm::experimental::transform_desc_t"},
+      {"cublasLtMatrixTransformDescDestroy",
+       "delete" + getDpctNamespace() +
+           "blas_gemm::experimental::transform_desc_t"},
+      {"cublasLtMatrixTransformDescSetAttribute",
+       getDpctNamespace() +
+           "blas_gemm::experimental::transform_desc_t::set_attribute"},
+      {"cublasLtMatrixTransformDescGetAttribute",
+       getDpctNamespace() +
+           "blas_gemm::experimental::transform_desc_t::get_attribute"},
+      {"cublasLtMatrixTransform",
+       getDpctNamespace() + "blas_gemm::experimental::matrix_transform"},
+      {"cublasLtGetVersion", getDpctNamespace() + "dnnl::get_version"},
   };
 
   SOLVERAPIWithRewriter = {"cusolverDnSetAdvOptions",
@@ -3885,24 +4119,6 @@ const MapNames::MapTy MapNames::Dim3MemberNamesMap{
     // ...
 };
 
-const MapNames::MapTy MapNames::MacrosMap{
-    {"__CUDA_ARCH__", "DPCT_COMPATIBILITY_TEMP"}, /**/
-    {"__NVCC__", "DPCT_COMPATIBILITY_TEMP"},      /**/
-    {"__CUDACC__", "SYCL_LANGUAGE_VERSION"},
-    {"__DRIVER_TYPES_H__", "__DPCT_HPP__"},
-    {"__CUDA_RUNTIME_H__", "__DPCT_HPP__"},
-    {"CUDART_VERSION", "DPCT_COMPAT_RT_VERSION"},
-    {"__CUDART_API_VERSION", "DPCT_COMPAT_RT_VERSION"},
-    {"CUDA_VERSION", "DPCT_COMPAT_RT_VERSION"},
-    {"__CUDACC_VER_MAJOR__", "DPCT_COMPAT_RT_MAJOR_VERSION"},
-    {"__CUDACC_VER_MINOR__", "DPCT_COMPAT_RT_MINOR_VERSION"},
-    {"CUBLAS_V2_H_", "MKL_SYCL_HPP"},
-    {"__CUDA__", "SYCL_LANGUAGE_VERSION"},
-    {"CUFFT_FORWARD", "-1"},
-    {"CUFFT_INVERSE", "1"},
-    //...
-};
-
 std::unordered_map<std::string, MacroMigrationRule> MapNames::MacroRuleMap{
     {"__forceinline__",
      MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
@@ -3921,39 +4137,90 @@ std::unordered_map<std::string, MacroMigrationRule> MapNames::MacroRuleMap{
                         "__noinline__", "__dpct_noinline__",
                         HelperFeatureEnum::device_ext)},
     {"cudaMemAttachGlobal",
-     MacroMigrationRule("flag_macro_rule", RulePriority::Fallback,
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
                         "cudaMemAttachGlobal", "0")},
     {"cudaStreamDefault",
-     MacroMigrationRule("cudaStreamDefault_rule", RulePriority::Fallback,
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
                         "cudaStreamDefault", "0")},
 
     {"CU_LAUNCH_PARAM_BUFFER_SIZE",
-     MacroMigrationRule("kernel_param_rule", RulePriority::Fallback,
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
                         "CU_LAUNCH_PARAM_BUFFER_SIZE", "((void *) 2)",
                         HelperFeatureEnum::device_ext)},
     {"CU_LAUNCH_PARAM_BUFFER_POINTER",
-     MacroMigrationRule("kernel_param_rule", RulePriority::Fallback,
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
                         "CU_LAUNCH_PARAM_BUFFER_POINTER", "((void *) 1)",
                         HelperFeatureEnum::device_ext)},
     {"CU_LAUNCH_PARAM_END",
-     MacroMigrationRule("kernel_param_rule", RulePriority::Fallback,
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
                         "CU_LAUNCH_PARAM_END", "((void *) 0)",
                         HelperFeatureEnum::device_ext)},
-    {"CUDART_PI_F", MacroMigrationRule("CUDART_PI_F", RulePriority::Fallback,
-                                       "CUDART_PI_F", "3.141592654F")},
-    {"CUB_MAX", MacroMigrationRule("cub_macro_rule", RulePriority::Fallback,
-                                   "CUB_MAX", "std::max")},
-    {"CUB_MIN", MacroMigrationRule("cub_macro_rule", RulePriority::Fallback,
-                                   "CUB_MIN", "std::min")},
+    {"CUDART_PI_F",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUDART_PI_F", "3.141592654F")},
+    {"CUB_MAX",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUB_MAX", "std::max")},
+    {"CUB_MIN",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUB_MIN", "std::min")},
     {"CUB_RUNTIME_FUNCTION",
-     MacroMigrationRule("cub_macro_rule", RulePriority::Fallback,
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
                         "CUB_RUNTIME_FUNCTION", "")},
     {"cudaStreamAttrValue",
-     MacroMigrationRule("cudaStreamAttrValue_macro_rule",
-                        RulePriority::Fallback, "cudaStreamAttrValue", "int")},
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "cudaStreamAttrValue", "int")},
     {"NCCL_VERSION_CODE",
-     MacroMigrationRule("nccl_macro_rule", RulePriority::Fallback,
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
                         "NCCL_VERSION_CODE", "DPCT_COMPAT_CCL_VERSION")},
+    {"__CUDA_ARCH__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__CUDA_ARCH__", "DPCT_COMPATIBILITY_TEMP",
+                        clang::dpct::HelperFeatureEnum::device_ext)},
+    {"__NVCC__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__NVCC__", "SYCL_LANGUAGE_VERSION")},
+    {"__CUDACC__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__CUDACC__", "SYCL_LANGUAGE_VERSION")},
+    {"__DRIVER_TYPES_H__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__DRIVER_TYPES_H__", "__DPCT_HPP__")},
+    {"__CUDA_RUNTIME_H__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__CUDA_RUNTIME_H__", "__DPCT_HPP__")},
+    {"CUDART_VERSION",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUDART_VERSION", "DPCT_COMPAT_RT_VERSION")},
+    {"__CUDART_API_VERSION",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__CUDART_API_VERSION", "DPCT_COMPAT_RT_VERSION")},
+    {"CUDA_VERSION",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUDA_VERSION", "DPCT_COMPAT_RT_VERSION")},
+    {"__CUDACC_VER_MAJOR__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__CUDACC_VER_MAJOR__",
+                        "DPCT_COMPAT_RT_MAJOR_VERSION")},
+    {"__CUDACC_VER_MINOR__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__CUDACC_VER_MINOR__",
+                        "DPCT_COMPAT_RT_MINOR_VERSION")},
+    {"CUBLAS_V2_H_",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUBLAS_V2_H_", "MKL_SYCL_HPP")},
+    {"__CUDA__",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "__CUDA__", "SYCL_LANGUAGE_VERSION")},
+    {"CUFFT_FORWARD",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUFFT_FORWARD", "-1")},
+    {"CUFFT_INVERSE",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "CUFFT_INVERSE", "1")},
+    {"cudaEventDefault",
+     MacroMigrationRule("dpct_build_in_macro_rule", RulePriority::Fallback,
+                        "cudaEventDefault", "0")},
     //...
 };
 
@@ -4016,6 +4283,7 @@ const MapNames::MapTy DeviceInfoVarRule::PropNamesMap{
     {"maxTexture1D", "image1d_max"},
     {"maxTexture2D", "image2d_max"},
     {"maxTexture3D", "image3d_max"},
+    {"regsPerBlock", "max_register_size_per_work_group"},
     // ...
 };
 
@@ -4062,6 +4330,7 @@ std::map<std::string, bool> MigrationStatistics::MigrationTable{
 #include "APINames_cuRAND.inc"
 #include "APINames_cuSOLVER.inc"
 #include "APINames_cuSPARSE.inc"
+#include "APINames_cudnn_frontend.inc"
 #include "APINames_nvGRAPH.inc"
 #include "APINames_nvJPEG.inc"
 #include "APINames_thrust.inc"
@@ -4123,10 +4392,11 @@ const MapNames::MapTy MemoryDataTypeRule::ExtentMemberNames{
     {"width", "[0]"}, {"height", "[1]"}, {"depth", "[2]"}};
 
 const MapNames::MapTy MemoryDataTypeRule::ArrayDescMemberNames{
-    {"Width", "x"},
-    {"Height", "y"},
+    {"Width", "width"},
+    {"Height", "height"},
+    {"Depth", "depth"},
     {"Format", "channel_type"},
-    {"NumChannels", "channel_num"}};
+    {"NumChannels", "num_channels"}};
 
 const MapNames::MapTy MemoryDataTypeRule::DirectReplMemberNames{
     // cudaMemcpy3DParms fields.
@@ -4138,6 +4408,9 @@ const MapNames::MapTy MemoryDataTypeRule::DirectReplMemberNames{
     {"dstPos", "to.pos"},
     {"extent", "size"},
     {"kind", "direction"},
+    // cudaMemcpy3DPeerParms fields.
+    {"srcDevice", "from.dev_id"},
+    {"dstDevice", "to.dev_id"},
     // CUDA_MEMCPY2D fields.
     {"Height", "size[1]"},
     {"WidthInBytes", "size[0]"},
@@ -4148,7 +4421,11 @@ const MapNames::MapTy MemoryDataTypeRule::DirectReplMemberNames{
     // CUDA_MEMCPY3D fields.
     {"Depth", "size[2]"},
     {"dstZ", "to.pos[2]"},
-    {"srcZ", "from.pos[2]"}};
+    {"srcZ", "from.pos[2]"},
+    // CUDA_MEMCPY3D_PEER fields.
+    {"srcContext", "from.dev_id"},
+    {"dstContext", "to.dev_id"},
+};
 
 const MapNames::MapTy MemoryDataTypeRule::GetSetReplMemberNames{
     // CUDA_MEMCPY2D fields.
@@ -4164,7 +4441,7 @@ const MapNames::MapTy MemoryDataTypeRule::GetSetReplMemberNames{
 };
 
 const std::vector<std::string> MemoryDataTypeRule::RemoveMember{
-    "dstLOD", "srcLOD", "dstMemoryType", "srcMemoryType"};
+    "dstLOD", "srcLOD", "dstMemoryType", "srcMemoryType", "Flags"};
 
 const std::unordered_set<std::string> MapNames::CooperativeGroupsAPISet{
     "this_thread_block",

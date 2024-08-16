@@ -1471,7 +1471,9 @@ bool MIParser::parseInstruction(unsigned &OpCode, unsigned &Flags) {
          Token.is(MIToken::kw_exact) ||
          Token.is(MIToken::kw_nofpexcept) ||
          Token.is(MIToken::kw_noconvergent) ||
-         Token.is(MIToken::kw_unpredictable)) {
+         Token.is(MIToken::kw_unpredictable) ||
+         Token.is(MIToken::kw_nneg) ||
+         Token.is(MIToken::kw_disjoint)) {
     // clang-format on
     // Mine frame and fast math flags
     if (Token.is(MIToken::kw_frame_setup))
@@ -1504,6 +1506,10 @@ bool MIParser::parseInstruction(unsigned &OpCode, unsigned &Flags) {
       Flags |= MachineInstr::Unpredictable;
     if (Token.is(MIToken::kw_noconvergent))
       Flags |= MachineInstr::NoConvergent;
+    if (Token.is(MIToken::kw_nneg))
+      Flags |= MachineInstr::NonNeg;
+    if (Token.is(MIToken::kw_disjoint))
+      Flags |= MachineInstr::Disjoint;
 
     lex();
   }
@@ -2910,6 +2916,7 @@ bool MIParser::parseMachineOperand(const unsigned OpCode, const unsigned OpIdx,
   case MIToken::IntegerLiteral:
     return parseImmediateOperand(Dest);
   case MIToken::kw_half:
+  case MIToken::kw_bfloat:
   case MIToken::kw_float:
   case MIToken::kw_double:
   case MIToken::kw_x86_fp80:

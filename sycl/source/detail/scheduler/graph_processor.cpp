@@ -24,7 +24,7 @@ static Command *getCommand(const EventImplPtr &Event) {
 void Scheduler::GraphProcessor::waitForEvent(const EventImplPtr &Event,
                                              ReadLockT &GraphReadLock,
                                              std::vector<Command *> &ToCleanUp,
-                                             bool LockTheLock) {
+                                             bool LockTheLock, bool *Success) {
   Command *Cmd = getCommand(Event);
   // Command can be nullptr if user creates sycl::event explicitly or the
   // event has been waited on by another thread
@@ -36,12 +36,12 @@ void Scheduler::GraphProcessor::waitForEvent(const EventImplPtr &Event,
       enqueueCommand(Cmd, GraphReadLock, Res, ToCleanUp, Cmd, BLOCKING);
   if (!Enqueued && EnqueueResultT::SyclEnqueueFailed == Res.MResult)
     // TODO: Reschedule commands.
-    throw runtime_error("Enqueue process failed.", PI_ERROR_INVALID_OPERATION);
+    throw exception(make_error_code(errc::runtime), "Enqueue process failed.");
 
   assert(Cmd->getEvent() == Event);
 
   GraphReadLock.unlock();
-  Event->waitInternal();
+  Event->waitInternal(Success);
 
   if (LockTheLock)
     GraphReadLock.lock();
