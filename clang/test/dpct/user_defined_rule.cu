@@ -6,9 +6,9 @@
 // RUN: mkdir %T/user_defined_rule_output
 // RUN: dpct -out-root %T/user_defined_rule_output user_defined_rule.cu --cuda-include-path="%cuda-path/include" --usm-level=none --rule-file=user_defined_rule.yaml --rule-file=user_defined_rule_2.yaml  -- -x cuda --cuda-host-only
 // RUN: FileCheck --input-file %T/user_defined_rule_output/user_defined_rule.dp.cpp --match-full-lines user_defined_rule.cu
-// RUN: %if build_lit %{icpx -c -fsycl -DBUILD_TEST  %T/user_defined_rule_output/user_defined_rule.dp.cpp -o %T/user_defined_rule_output/user_defined_rule.dp.o %}
+// RUN: %if build_lit %{icpx -c -fsycl -DNO_BUILD_TEST  %T/user_defined_rule_output/user_defined_rule.dp.cpp -o %T/user_defined_rule_output/user_defined_rule.dp.o %}
 
-#ifndef BUILD_TEST
+#ifndef NO_BUILD_TEST
 //CHECK: #ifdef MACRO_A
 //CHECK: #include <cmath3>
 //CHECK: #include "cmath2"
@@ -50,11 +50,13 @@ public:
     int fieldC;
     int methodA(int i, int j){return 0;};
 };
+ClassA getClassA() { return ClassA(); };
 class ClassB{
 public:
   int fieldB;
   int methodB(int i){return 0;};
 };
+ClassB getClassB() { return ClassB(); };
 
 enum Fruit{
   apple,
@@ -80,12 +82,14 @@ void foo2(){
   //CHECK: ClassB a;
   //CHECK-NEXT: a.fieldD = 3;
   //CHECK-NEXT: a.methodB(2);
+  //CHECK-NEXT: getClassB().methodB(2);
   //CHECK-NEXT: a.set_a(3);
   //CHECK-NEXT: int k = a.get_a();
   //CHECK-NEXT: Fruit f = pineapple;
   ClassA a;
   a.fieldC = 3;
   a.methodA(1,2);
+  getClassA().methodA(1,2);
   a.fieldA = 3;
   int k = a.fieldA;
   Fruit f = Fruit::apple;
@@ -203,5 +207,13 @@ void foo10(){
 // CHECK-NEXT: #endif
 #if defined(__NVCC__)
 #endif
+
+template<class T> class MyClass{};
+int foo11(){
+  //CHECK: MyClass2<int> a;
+  MyClass<int> a;
+  //CHECK: MyClass2<MyClass2<float>> b;
+  MyClass<MyClass<float>> b;
+}
 
 #endif

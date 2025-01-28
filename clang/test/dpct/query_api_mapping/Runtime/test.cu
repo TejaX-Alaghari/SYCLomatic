@@ -45,16 +45,16 @@
 // CUDADEVICEGETATTRIBUTE-NEXT:                                   i /*int*/);
 // CUDADEVICEGETATTRIBUTE-NEXT: Is migrated to:
 // CUDADEVICEGETATTRIBUTE-NEXT:   // Only support migration of some cudaDeviceAttr type.
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 1 */ *pi = dpct::dev_mgr::instance().get_device(i).get_max_work_group_size();
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 2 */ *pi = dpct::dev_mgr::instance().get_device(i).get_max_clock_frequency();
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 3 */ *pi = dpct::dev_mgr::instance().get_device(i).get_mem_base_addr_align_in_bytes();
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 4 */ *pi = dpct::dev_mgr::instance().get_device(i).get_max_compute_units();
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 5 */ *pi = dpct::dev_mgr::instance().get_device(i).get_integrated();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 1 */ *pi = dpct::get_device(i).get_max_work_group_size();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 2 */ *pi = dpct::get_device(i).get_max_clock_frequency();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 3 */ *pi = dpct::get_device(i).get_mem_base_addr_align_in_bytes();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 4 */ *pi = dpct::get_device(i).get_max_compute_units();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 5 */ *pi = dpct::get_device(i).get_integrated();
 // CUDADEVICEGETATTRIBUTE-NEXT:   /* 6 */ *pi = 1;
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 7 */ *pi = dpct::dev_mgr::instance().get_device(i).get_major_version();
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 8 */ *pi = dpct::dev_mgr::instance().get_device(i).get_minor_version();
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 9 */ *pi = dpct::dev_mgr::instance().get_device(i).is_native_atomic_supported();
-// CUDADEVICEGETATTRIBUTE-NEXT:   /* 10 */ *pi = dpct::dev_mgr::instance().get_device(i).get_info<sycl::info::device::usm_shared_allocations>();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 7 */ *pi = dpct::get_device(i).get_major_version();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 8 */ *pi = dpct::get_device(i).get_minor_version();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 9 */ *pi = dpct::get_device(i).is_native_atomic_supported();
+// CUDADEVICEGETATTRIBUTE-NEXT:   /* 10 */ *pi = dpct::get_device(i).get_info<sycl::info::device::usm_shared_allocations>();
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaDeviceGetCacheConfig | FileCheck %s -check-prefix=CUDADEVICEGETCACHECONFIG
 // CUDADEVICEGETCACHECONFIG: CUDA API:
@@ -110,13 +110,13 @@
 // CUDAGETDEVICE: CUDA API:
 // CUDAGETDEVICE-NEXT:   cudaGetDevice(pi /*int **/);
 // CUDAGETDEVICE-NEXT: Is migrated to:
-// CUDAGETDEVICE-NEXT:   *pi = dpct::dev_mgr::instance().current_device_id();
+// CUDAGETDEVICE-NEXT:   *pi = dpct::get_current_device_id();
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaGetDeviceCount | FileCheck %s -check-prefix=CUDAGETDEVICECOUNT
 // CUDAGETDEVICECOUNT: CUDA API:
 // CUDAGETDEVICECOUNT-NEXT:   cudaGetDeviceCount(i /*int*/);
 // CUDAGETDEVICECOUNT-NEXT: Is migrated to:
-// CUDAGETDEVICECOUNT-NEXT:   *i = dpct::dev_mgr::instance().device_count();
+// CUDAGETDEVICECOUNT-NEXT:   *i = dpct::device_count();
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaGetDeviceProperties | FileCheck %s -check-prefix=CUDAGETDEVICEPROPERTIES
 // CUDAGETDEVICEPROPERTIES: CUDA API:
@@ -124,7 +124,7 @@
 // CUDAGETDEVICEPROPERTIES-NEXT:   cudaGetDeviceProperties(pd, i /*int*/);
 // CUDAGETDEVICEPROPERTIES-NEXT: Is migrated to:
 // CUDAGETDEVICEPROPERTIES-NEXT:   dpct::device_info *pd;
-// CUDAGETDEVICEPROPERTIES-NEXT:   dpct::get_device_info(*pd, dpct::dev_mgr::instance().get_device(i));
+// CUDAGETDEVICEPROPERTIES-NEXT:   dpct::get_device(i).get_device_info(*pd);
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaSetDevice | FileCheck %s -check-prefix=CUDASETDEVICE
 // CUDASETDEVICE: CUDA API:
@@ -165,18 +165,18 @@
 // CUDAGETERRORNAME-NEXT:   cudaGetErrorName(e /*cudaError_t*/);
 // CUDAGETERRORNAME-NEXT: Is migrated to:
 // CUDAGETERRORNAME-NEXT:   /*
-// CUDAGETERRORNAME-NEXT:   DPCT1009:0: SYCL uses exceptions to report errors and does not use the error codes. The call was replaced by a placeholder string. You need to rewrite this code.
+// CUDAGETERRORNAME-NEXT:   DPCT1009:{{[0-9]+}}: SYCL reports errors using exceptions and does not use error codes. Please replace the "get_error_string_dummy(...)" with a real error-handling function.
 // CUDAGETERRORNAME-NEXT:   */
-// CUDAGETERRORNAME-NEXT:   "<Placeholder string>";
+// CUDAGETERRORNAME-NEXT:   dpct::get_error_string_dummy(e);
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaGetErrorString | FileCheck %s -check-prefix=CUDAGETERRORSTRING
 // CUDAGETERRORSTRING: CUDA API:
 // CUDAGETERRORSTRING-NEXT:   cudaGetErrorString(e /*cudaError_t*/);
 // CUDAGETERRORSTRING-NEXT: Is migrated to:
 // CUDAGETERRORSTRING-NEXT:   /*
-// CUDAGETERRORSTRING-NEXT:   DPCT1009:0: SYCL uses exceptions to report errors and does not use the error codes. The call was replaced by a placeholder string. You need to rewrite this code.
+// CUDAGETERRORSTRING-NEXT:   DPCT1009:{{[0-9]+}}: SYCL reports errors using exceptions and does not use error codes. Please replace the "get_error_string_dummy(...)" with a real error-handling function.
 // CUDAGETERRORSTRING-NEXT:   */
-// CUDAGETERRORSTRING-NEXT:   "<Placeholder string>";
+// CUDAGETERRORSTRING-NEXT:   dpct::get_error_string_dummy(e);
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaGetLastError | FileCheck %s -check-prefix=CUDAGETLASTERROR
 // CUDAGETLASTERROR: CUDA API:
@@ -351,11 +351,7 @@
 // CUDALAUNCHKERNEL-NEXT:   cudaLaunchKernel(f /*cudaError_t*/, gridDim /*dim3*/, blockDim /*dim3*/,
 // CUDALAUNCHKERNEL-NEXT:                    args /*void ***/, sharedMem /*size_t*/, s /*cudaStream_t*/);
 // CUDALAUNCHKERNEL-NEXT: Is migrated to:
-// CUDALAUNCHKERNEL-NEXT:   s->parallel_for(
-// CUDALAUNCHKERNEL-NEXT:     sycl::nd_range<3>(gridDim * blockDim, blockDim),
-// CUDALAUNCHKERNEL-NEXT:     [=](sycl::nd_item<3> item_ct1) {
-// CUDALAUNCHKERNEL-NEXT:       f();
-// CUDALAUNCHKERNEL-NEXT:     });
+// CUDALAUNCHKERNEL-NEXT:   dpct::kernel_launcher::launch(f, gridDim, blockDim, args, sharedMem, s);
 
 /// Occupancy
 
@@ -447,19 +443,19 @@
 // CUDADEVICECANACCESSPEER: CUDA API:
 // CUDADEVICECANACCESSPEER-NEXT:   cudaDeviceCanAccessPeer(pi /*int **/, i1 /*int*/, i2 /*int*/);
 // CUDADEVICECANACCESSPEER-NEXT: Is migrated to:
-// CUDADEVICECANACCESSPEER-NEXT:   *pi = dpct::dev_mgr::instance().get_device(i1).ext_oneapi_can_access_peer(dpct::dev_mgr::instance().get_device(i2));
+// CUDADEVICECANACCESSPEER-NEXT:   *pi = dpct::get_device(i1).ext_oneapi_can_access_peer(dpct::get_device(i2));
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaDeviceDisablePeerAccess | FileCheck %s -check-prefix=CUDADEVICEDISABLEPEERACCESS
 // CUDADEVICEDISABLEPEERACCESS: CUDA API:
 // CUDADEVICEDISABLEPEERACCESS-NEXT:   cudaDeviceDisablePeerAccess(i /*int*/);
 // CUDADEVICEDISABLEPEERACCESS-NEXT: Is migrated to:
-// CUDADEVICEDISABLEPEERACCESS-NEXT:   dpct::get_current_device().ext_oneapi_disable_peer_access(dpct::dev_mgr::instance().get_device(i));
+// CUDADEVICEDISABLEPEERACCESS-NEXT:   dpct::get_current_device().ext_oneapi_disable_peer_access(dpct::get_device(i));
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cudaDeviceEnablePeerAccess | FileCheck %s -check-prefix=CUDADEVICEENABLEPEERACCESS
 // CUDADEVICEENABLEPEERACCESS: CUDA API:
 // CUDADEVICEENABLEPEERACCESS-NEXT:   cudaDeviceEnablePeerAccess(i /*int*/, u /*unsigned int*/);
 // CUDADEVICEENABLEPEERACCESS-NEXT: Is migrated to:
-// CUDADEVICEENABLEPEERACCESS-NEXT:   dpct::get_current_device().ext_oneapi_enable_peer_access(dpct::dev_mgr::instance().get_device(i));
+// CUDADEVICEENABLEPEERACCESS-NEXT:   dpct::get_current_device().ext_oneapi_enable_peer_access(dpct::get_device(i));
 
 /// Texture Object Management
 

@@ -28,8 +28,22 @@ macro(_DPCT_CREATE_BUILD_COMMAND sycl_target generated_files)
     set(options -shared)
   endif()
 
+  set(sources)
+
+  set(is_options FALSE)
+  foreach(arg ${_argn_list})
+    if (is_options)
+      list(APPEND options ${arg})
+    elseif (${arg} STREQUAL "OPTIONS")
+      set(is_options TRUE)
+      continue()
+    else()
+      list(APPEND sources ${arg})
+    endif()
+  endforeach()
+
   # Iterate each macro arguments and create custom command for each cpp file
-  foreach(file ${_argn_list})
+  foreach(file ${sources})
     if(${file} MATCHES "\\.cpp")
         get_filename_component( basename ${file} NAME )
     
@@ -129,3 +143,4 @@ set(SYCL_HOST_FLAGS "")
 
 # 'SYCL_COMPILER_EXECUTABLE' is used to specify the path to the SYCL Compiler (icpx).
 set(SYCL_COMPILER_EXECUTABLE "${SYCL_INCLUDE_DIR}/../bin/icpx")
+set(SYCL_PROPAGATE_HOST_FLAGS "")

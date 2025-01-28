@@ -9,38 +9,17 @@
 #ifndef __DPCT_CCL_UTILS_HPP__
 #define __DPCT_CCL_UTILS_HPP__
 
-#include <sycl/sycl.hpp>
+#include "compat_service.hpp"
+
 #include <oneapi/ccl.hpp>
+
 #include <unordered_map>
 #include <memory>
 
-#include "device.hpp"
+#include "detail/ccl_utils_detail.hpp"
 
 namespace dpct {
 namespace ccl {
-namespace detail {
-
-/// Get stored kvs with specified kvs address.
-inline std::shared_ptr<oneapi::ccl::kvs> &
-get_kvs(const oneapi::ccl::kvs::address_type &addr) {
-  struct hash {
-    std::size_t operator()(const oneapi::ccl::kvs::address_type &in) const {
-      return std::hash<std::string_view>()(std::string_view(in.data(), in.size()));
-    }
-  };
-  static std::unordered_map<oneapi::ccl::kvs::address_type,
-                            std::shared_ptr<oneapi::ccl::kvs>, hash>
-      kvs_map;
-  return kvs_map[addr];
-}
-
-/// Help class to init ccl environment. 
-class ccl_init_helper {
-public:
-  ccl_init_helper() { oneapi::ccl::init(); }
-};
-
-} // namespace detail
 
 /// Get concatenated library version as an integer.
 static inline int get_version() {
@@ -75,8 +54,9 @@ public:
       int size, int rank, oneapi::ccl::kvs::address_type id,
       const oneapi::ccl::comm_attr &attr = oneapi::ccl::default_comm_attr)
       : _device_comm(oneapi::ccl::create_device(
-            static_cast<sycl::device &>(dpct::get_current_device()))),
-        _context_comm(oneapi::ccl::create_context(dpct::get_default_context())),
+            static_cast<sycl::device &>(::dpct::cs::get_current_device()))),
+        _context_comm(
+            oneapi::ccl::create_context(::dpct::cs::get_default_context())),
         _comm(oneapi::ccl::create_communicator(
             size, rank, _device_comm, _context_comm, dpct::ccl::create_kvs(id),
             attr)) {

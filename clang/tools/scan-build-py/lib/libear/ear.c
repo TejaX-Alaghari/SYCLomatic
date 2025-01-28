@@ -53,6 +53,7 @@ extern char **environ;
 
 #ifdef SYCLomatic_CUSTOMIZATION
 #include <ctype.h>
+#include <sys/stat.h>
 #define PATH_MAX 4096
 #endif // SYCLomatic_CUSTOMIZATION
 
@@ -487,18 +488,36 @@ static int call_eaccess(const char *pathname, int mode) {
 }
 
 int eaccess(const char *pathname, int mode) {
+  int ret = call_eaccess(pathname, mode);
+  if (ret == 0) {
+    return 0;
+  }
+
   int len = strlen(pathname);
   if (len == 4 && pathname[3] == 'c' && pathname[2] == 'c' &&
       pathname[1] == 'v' && pathname[0] == 'n') {
     // To handle case like "nvcc foo.cu ..."
     return 0;
-  } else if (len > 4 && pathname[len - 1] == 'c' && pathname[len - 2] == 'c' &&
-             pathname[len - 3] == 'v' && pathname[len - 4] == 'n' &&
-             pathname[len - 5] == '/') {
+  }
+  if (len > 4 && pathname[len - 1] == 'c' && pathname[len - 2] == 'c' &&
+      pathname[len - 3] == 'v' && pathname[len - 4] == 'n' &&
+      pathname[len - 5] == '/') {
     // To handle case like "/path/to/nvcc foo.cu ..."
     return 0;
   }
-  return call_eaccess(pathname, mode);
+  return ret;
+}
+
+const char *get_intercept_stub_path(void) {
+
+  const char *intercept_stub_path = getenv("INTERCEPT_STUB_PATH");
+  if (intercept_stub_path) {
+    return intercept_stub_path;
+  }
+
+  perror("bear: failed to get value of environment variable "
+         "'INTERCEPT_STUB_PATH'\n");
+  exit(EXIT_FAILURE);
 }
 
 static int call_stat(const char *pathname, struct stat *statbuf) {
@@ -509,18 +528,42 @@ static int call_stat(const char *pathname, struct stat *statbuf) {
 }
 
 int stat(const char *pathname, struct stat *statbuf) {
+  int ret = call_stat(pathname, statbuf);
+  if (ret == 0) {
+    return 0;
+  }
   int len = strlen(pathname);
   if (len == 4 && pathname[3] == 'c' && pathname[2] == 'c' &&
       pathname[1] == 'v' && pathname[0] == 'n') {
     // To handle case like "nvcc foo.cu ..."
-    return 0;
-  } else if (len > 4 && pathname[len - 1] == 'c' && pathname[len - 2] == 'c' &&
-             pathname[len - 3] == 'v' && pathname[len - 4] == 'n' &&
-             pathname[len - 5] == '/') {
-    // To handle case like "/path/to/nvcc foo.cu ..."
+
+    const char *nvcc_path = getenv("INTERCEPT_COMPILE_PATH");
+    if (nvcc_path) {
+      call_stat(nvcc_path, statbuf);
+      return 0;
+    }
+
+    pathname = get_intercept_stub_path();
+    call_stat(pathname, statbuf);
     return 0;
   }
-  return call_stat(pathname, statbuf);
+
+  if (len > 4 && pathname[len - 1] == 'c' && pathname[len - 2] == 'c' &&
+      pathname[len - 3] == 'v' && pathname[len - 4] == 'n' &&
+      pathname[len - 5] == '/') {
+    // To handle case like "/path/to/nvcc foo.cu ..."
+
+    const char *nvcc_path = getenv("INTERCEPT_COMPILE_PATH");
+    if (nvcc_path) {
+      call_stat(nvcc_path, statbuf);
+      return 0;
+    }
+
+    pathname = get_intercept_stub_path();
+    call_stat(pathname, statbuf);
+    return 0;
+  }
+  return ret;
 }
 
 /*
@@ -1636,39 +1679,7 @@ void emit_cmake_warning(char const *argv[], int argc) {
 // returns no return value.
 char *replace_binary_name(const char *src, const char *pos, int compiler_idx,
                           const char *const compiler_array[]) {
-  FILE *fp;
-  char replacement[PATH_MAX];
-  char file_path[PATH_MAX];
-
-  fp = popen("which dpct", "r");
-  if (fp == NULL) {
-    perror("bear: failed to run command 'which dpct'\n");
-    exit(EXIT_FAILURE);
-  }
-
-  if (fgets(replacement, PATH_MAX, fp) == NULL) {
-    perror("bear: fgets\n");
-    exit(EXIT_FAILURE);
-  }
-  pclose(fp);
-  replacement[strlen(replacement) - 1] =
-      '\0'; // to remove extra '\n' added by "which dpct"
-
-  char *res = realpath(
-      replacement,
-      file_path); // to get the canonicalized absolute pathname in file_path
-
-  if (!res) {
-    perror("bear: realpath\n");
-    exit(EXIT_FAILURE);
-  }
-  if ((strlen(file_path) + strlen("lib/libear/intercept-stub") -
-       strlen("bin/dpct")) >= PATH_MAX) {
-    perror("bear: strcpy overflow, path to dpct is too long.\n");
-    exit(EXIT_FAILURE);
-  }
-  strcpy(file_path + strlen(file_path) - strlen("bin/dpct"),
-         "lib/libear/intercept-stub");
+  const char *file_path = get_intercept_stub_path();
 
   // To malloc required size of physical memory it really needs may fail in
   // some case, so malloc 4K bytes (one physical page) instead.
@@ -1703,9 +1714,111 @@ char *replace_binary_name(const char *src, const char *pos, int compiler_idx,
 
 #endif // SYCLomatic_CUSTOMIZATION
 
-/* this method is to write log about the process creation. */
-
 #ifdef SYCLomatic_CUSTOMIZATION
+int is_tool_available(char const *argv[], size_t const argc) {
+  const char *pathname = argv[0];
+  int len = strlen(pathname);
+  int is_nvcc = 0;
+  int is_nvcc_available = 0;
+
+  char *value = getenv("INTERCEPT_COMPILE_PATH");
+  if (value) {
+    is_nvcc_available = 1;
+  }
+
+  if (len == 4 && pathname[3] == 'c' && pathname[2] == 'c' &&
+      pathname[1] == 'v' && pathname[0] == 'n') {
+    // To handle case like "nvcc"
+    is_nvcc = 1;
+    value = getenv("IS_INTERCEPT_COMPILE_PATH_FROM_ENV_PATH");
+    if (value && *value == '0') {
+      return 0;
+    }
+  }
+  if (len > 4 && pathname[len - 1] == 'c' && pathname[len - 2] == 'c' &&
+      pathname[len - 3] == 'v' && pathname[len - 4] == 'n' &&
+      pathname[len - 5] == '/') {
+    // To handle case like "/path/to/nvcc"
+    is_nvcc = 1;
+  }
+  if (is_nvcc) {
+    if (is_nvcc_available) {
+      return 1;
+    }
+    return 0;
+  }
+
+  int is_ld = 0;
+  if (len == 2 && pathname[1] == 'd' && pathname[0] == 'l') {
+    // To handle case like "ld"
+    is_ld = 1;
+  }
+  if (len > 2 && pathname[len - 1] == 'd' && pathname[len - 2] == 'l' &&
+      pathname[len - 3] == '/') {
+    // To handle case like "/path/to/ld"
+    is_ld = 1;
+  }
+  if (is_ld) {
+    if (!is_nvcc_available) {
+      for (size_t idx = 0; idx < argc; idx++) {
+        // if ld linker command uses cuda libarary like libcuda.so or
+        // libcudart.so, then the ld command should be intercepted.
+        if (strcmp(argv[idx], "-lcudart") == 0 ||
+            strcmp(argv[idx], "-lcuda") == 0)
+          return 0;
+      }
+    }
+  }
+
+  if (!is_nvcc_available && argc == 3) {
+    // To handle case like "/bin/[sh/bash] -c '[echo or something]
+    // [/path/to/]nvcc -c foo.cu -o foo.o'" on the environment where tool chain
+    // is not available.
+    int is_bash = 0;
+    is_nvcc = 0;
+    const char *pathname = argv[0];
+    len = strlen(pathname);
+
+    is_bash = (len == 2 && pathname[0] == 's' && pathname[1] == 'h') ||
+              (len > 2 && pathname[len - 3] == '/' &&
+               pathname[len - 2] == 's' && pathname[len - 1] == 'h') ||
+              (len == 4 && pathname[3] == 'h' && pathname[2] == 's' &&
+               pathname[1] == 'a' && pathname[0] == 'b') ||
+              (len > 4 && pathname[len - 1] == 'h' &&
+               pathname[len - 2] == 's' && pathname[len - 3] == 'a' &&
+               pathname[len - 4] == 'b' && pathname[len - 5] == '/');
+    if (!is_bash) {
+      return 1;
+    }
+
+    pathname = argv[2];
+    const char *pos = strstr(argv[2], "nvcc");
+
+    if (!pos) {
+      return 1;
+    }
+
+    if (pos) {
+      is_nvcc =
+          pos > argv[2]
+              ? strlen(pos) >= 4 && isspace(*(pos + 4)) &&
+                    (*(pos - 1) == '/' || *(pos - 1) == ';' ||
+                     isspace(*(pos - 1))) // check arount of "nvcc" to make
+                                          // sure it is a compiler command.
+              : strlen(pos) >= 4 &&
+                    isspace(*(pos + 4)); // check the end of "nvcc" to make
+                                         // sure it is a compiler command.
+    }
+
+    if (is_bash && strcmp(argv[1], "-c") == 0 && is_nvcc) {
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+/* this method is to write log about the process creation. */
 // This method parses the command execution issued by the build tool make to
 // write log for the compile options and fake the expecting outcome for the
 // command. It returns whether intercept-stub is used to take over the command
@@ -1758,6 +1871,21 @@ static void bear_report_call(char const *fun, char const *const argv[]) {
 #ifdef SYCLomatic_CUSTOMIZATION
 
   emit_cmake_warning(argv, argc);
+
+  if (is_tool_available(argv, argc)) {
+    for (size_t it = 0; it < argc; ++it) {
+      fprintf(fd, "%s%c", argv[it], US);
+    }
+    fprintf(fd, "%c", GS);
+    if (fclose(fd)) {
+      perror("bear: fclose");
+      pthread_mutex_unlock(&mutex);
+      exit(EXIT_FAILURE);
+    }
+    free((void *)cwd);
+    pthread_mutex_unlock(&mutex);
+    return 0;
+  }
 
   // compiler list should be intercepted.
   const char *const compiler_array[] = {"nvcc", "clang++"};

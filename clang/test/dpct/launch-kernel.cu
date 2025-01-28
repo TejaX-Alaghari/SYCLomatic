@@ -43,10 +43,10 @@ int main() {
   cudaCreateTextureObject(&tex, &res, &texDesc, NULL);
 
   void *args[2] = { &d_data, &tex };
-
+  // CHECK:  static_cast<dpct::image_wrapper<int, 1> *>(tex)->create_image();
   // CHECK: q_ct1.submit(
   // CHECK-NEXT:   [&](sycl::handler &cgh) {
-  // CHECK-NEXT:     dpct::access_wrapper<int *> d_acc_ct0(*(int **)args[0], cgh);
+  // CHECK-NEXT:     dpct::access_wrapper d_acc_ct0(*(int **)args[0], cgh);
   // CHECK-EMPTY:
   // CHECK-NEXT:     auto tex_acc = static_cast<dpct::image_wrapper<int, 1> *>(*(dpct::image_wrapper_base_p *)args[1])->get_access(cgh);
   // CHECK-EMPTY:
@@ -67,7 +67,7 @@ int main() {
   // CHECK-NEXT:   [&](sycl::handler &cgh) {
   // CHECK-NEXT:     sycl::local_accessor<uint8_t, 1> dpct_local_acc_ct1(sycl::range<1>(32), cgh);
   // CHECK-NEXT:     sycl::local_accessor<int, 1> s_acc_ct1(sycl::range<1>(16), cgh);
-  // CHECK-NEXT:     dpct::access_wrapper<int *> d_acc_ct0(*(int **)args[0], cgh);
+  // CHECK-NEXT:     dpct::access_wrapper d_acc_ct0(*(int **)args[0], cgh);
   // CHECK-EMPTY:
   // CHECK-NEXT:     cgh.parallel_for(
   // CHECK-NEXT:       sycl::nd_range<3>(sycl::range<3>(1, 1, 16) * sycl::range<3>(1, 1, 16), sycl::range<3>(1, 1, 16)),
@@ -76,16 +76,9 @@ int main() {
   // CHECK-NEXT:       });
   // CHECK-NEXT:   });
   cudaLaunchKernel((const void *)&template_kernel<int>, dim3(16), dim3(16), args, 32, stream);
-
+  // CHECK:  void *kernel_func = (void *)dpct::wrapper_register(&kernel_wrapper).get();
   void *kernel_func = (void *)&kernel;
-  // CHECK: /*
-  // CHECK-NEXT: DPCT1123:{{[0-9]+}}: The kernel function pointer cannot be used in the device code. You need to call the kernel function with the correct argument(s) directly. According to the kernel function definition, adjusting the dimension of the sycl::nd_item may also be required.
-  // CHECK-NEXT: */
-  // CHECK-NEXT: q_ct1.parallel_for(
-  // CHECK-NEXT:   sycl::nd_range<3>(sycl::range<3>(1, 1, 16) * sycl::range<3>(1, 1, 16), sycl::range<3>(1, 1, 16)), 
-  // CHECK-NEXT:   [=](sycl::nd_item<3> item_ct1) {
-  // CHECK-NEXT:     kernel_func();
-  // CHECK-NEXT:   });
+  // CHECK:  dpct::kernel_launcher::launch(kernel_func, dpct::dim3(16), dpct::dim3(16), args, 0, 0);
   cudaLaunchKernel(kernel_func, dim3(16), dim3(16), args, 0, 0);
 
   cudaStreamDestroy(stream);

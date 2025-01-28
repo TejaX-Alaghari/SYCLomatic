@@ -2,9 +2,8 @@
 // UNSUPPORTED: v8.0, v9.0, v9.1, v9.2, v10.0
 // RUN: dpct --format-range=none -out-root %T/thrust-it-diff %s --cuda-include-path="%cuda-path/include" -- -x cuda --cuda-host-only --std=c++14
 // RUN: FileCheck --input-file %T/thrust-it-diff/thrust-it-diff.dp.cpp --match-full-lines %s
-// RUN: %if build_lit %{icpx -c -fsycl -DBUILD_TEST  %T/thrust-it-diff/thrust-it-diff.dp.cpp -o %T/thrust-it-diff/thrust-it-diff.dp.o %}
+// RUN: %if build_lit %{icpx -c -fsycl -DNO_BUILD_TEST  %T/thrust-it-diff/thrust-it-diff.dp.cpp -o %T/thrust-it-diff/thrust-it-diff.dp.o %}
 
-#ifndef BUILD_TEST
 // CHECK: #include <oneapi/dpl/execution>
 // CHECK-NEXT: #include <oneapi/dpl/algorithm>
 // CHECK-NEXT: #include <sycl/sycl.hpp>
@@ -24,6 +23,7 @@ public:
   typename thrust::iterator_difference<Iterator>::type IDTFieldDecl;
 };
 
-// TODO:
+// CHECK: typename std::iterator_traits<int *>::difference_type IDTVarDecl;
 typename thrust::iterator_difference<int *>::type IDTVarDecl;
-#endif
+
+

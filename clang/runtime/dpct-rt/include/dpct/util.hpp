@@ -72,7 +72,7 @@ struct make_index_sequence
 template <int... Ints>
 struct make_index_sequence<0, Ints...> : public integer_sequence<Ints...> {};
 
-template <typename T> struct DataType { using T2 = T; };
+template <typename T> struct [[deprecated]] DataType { using T2 = T; };
 template <typename T> struct DataType<sycl::vec<T, 2>> {
   using T2 = std::complex<T>;
 };
@@ -536,6 +536,82 @@ T shift_sub_group_right(unsigned int member_mask,
 #endif // __SYCL_DEVICE_ONLY__
 }
 
+/// Masked version of shift_sub_group_left, which execute masked sub-group
+/// operation. The parameter member_mask indicating the work-items participating
+/// the call. Whether the n-th bit is set to 1 representing whether the
+/// work-item with id n is participating the call. All work-items named in
+/// member_mask must be executed with the same member_mask, or the result is
+/// undefined.
+/// \tparam LogicSubGroupSize Input logical sub_group size
+/// \tparam T Input value type
+/// \param [in] member_mask Input mask
+/// \param [in] g Input sub_group
+/// \param [in] x Input value
+/// \param [in] delta Input delta
+/// \param [in] last_item Index of last thread in logical subgroup
+/// \returns The result
+template <size_t LogicSubGroupSize, typename T>
+T shift_sub_group_left(sycl::sub_group sg, T input, int delta, int last_item,
+                       unsigned member_mask) {
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__NVPTX__)
+  T result;
+  constexpr int cVal = ((32 - LogicSubGroupSize) << 8);
+  SHFL_SYNC(result, member_mask, input, delta, cVal | last_item, down_i32)
+  return result;
+#else
+  if ((1U << sg.get_local_linear_id()) & member_mask) {
+    auto inner = sycl::ext::oneapi::experimental::get_tangle_group(sg);
+    sycl::group_barrier(inner);
+  }
+  auto partition =
+      sycl::ext::oneapi::experimental::get_fixed_size_group<LogicSubGroupSize>(
+          sg);
+  int id = partition.get_local_linear_id();
+  T result = sycl::shift_group_left(partition, input, delta);
+  if ((id + delta) > last_item)
+    result = input;
+  return result;
+#endif
+}
+
+/// Masked version of shift_sub_group_right, which execute masked sub-group
+/// operation. The parameter member_mask indicating the work-items participating
+/// the call. Whether the n-th bit is set to 1 representing whether the
+/// work-item with id n is participating the call. All work-items named in
+/// member_mask must be executed with the same member_mask, or the result is
+/// undefined.
+/// \tparam LogicSubGroupSize Input logical sub_group size
+/// \tparam T Input value type
+/// \param [in] member_mask Input mask
+/// \param [in] g Input sub_group
+/// \param [in] x Input value
+/// \param [in] delta Input delta
+/// \param [in] first_item Index of first lane in logical subgroup
+/// \returns The result
+template <size_t LogicSubGroupSize, typename T>
+T shift_sub_group_right(sycl::sub_group sg, T input, int delta, int first_item,
+                        unsigned member_mask) {
+#if defined(__SYCL_DEVICE_ONLY__) && defined(__NVPTX__)
+  T result;
+  constexpr int cVal = ((32 - LogicSubGroupSize) << 8);
+  SHFL_SYNC(result, member_mask, input, delta, cVal | first_item, up_i32)
+  return result;
+#else
+  if ((1U << sg.get_local_linear_id()) & member_mask) {
+    auto inner = sycl::ext::oneapi::experimental::get_tangle_group(sg);
+    sycl::group_barrier(inner);
+  }
+  auto partition =
+      sycl::ext::oneapi::experimental::get_fixed_size_group<LogicSubGroupSize>(
+          sg);
+  int id = sg.get_local_linear_id();
+  T result = sycl::shift_group_right(partition, input, delta);
+  if ((id - first_item) < delta)
+    result = input;
+  return result;
+#endif
+}
+
 /// Masked version of permute_sub_group_by_xor, which execute masked sub-group
 /// operation. The parameter member_mask indicating the work-items participating
 /// the call. Whether the n-th bit is set to 1 representing whether the
@@ -658,7 +734,11 @@ namespace experimental {
 /// Note: Please make sure that all the work items of all work groups within
 /// a SYCL kernel can be scheduled actively at the same time on a device.
 template <int dimensions = 3>
-inline void nd_range_barrier(
+[[deprecated(
+    "Please use "
+    "sycl::group_barrier(sycl::ext::oneapi::experimental::root_group G) "
+    "instead.")]] inline void
+nd_range_barrier(
     const sycl::nd_item<dimensions> &item,
     sycl::atomic_ref<unsigned int,
 #ifdef __AMDGPU__
@@ -702,7 +782,11 @@ inline void nd_range_barrier(
 /// Note: Please make sure that all the work items of all work groups within
 /// a SYCL kernel can be scheduled actively at the same time on a device.
 template <>
-inline void nd_range_barrier(
+[[deprecated(
+    "Please use "
+    "sycl::group_barrier(sycl::ext::oneapi::experimental::root_group G) "
+    "instead.")]] inline void
+nd_range_barrier(
     const sycl::nd_item<1> &item,
     sycl::atomic_ref<unsigned int,
 #ifdef __AMDGPU__
@@ -1041,6 +1125,8 @@ public:
   template <int i>
   using arg_type = std::tuple_element_t<account_for_default_params<i>(),
 					  std::tuple<Ts...>>;
+  static constexpr int params_num = sizeof...(Ts);
+
 private:
   template <int i>
   static constexpr int get_offset() {
@@ -1100,6 +1186,124 @@ public:
     }
   }
 };
+
+/// \brief This struct template used to get the type of the N-th argument of a
+/// callable type `Func`. It supports both function types (e.g., `void(int,
+/// double)`) and callable objects such as lambdas or functors.
+///
+/// \tparam Func The callable type from which to extract the argument type.
+/// \tparam N The index of the argument to retrieve.
+///
+/// Example:
+/// using Func = void(int, double, const char*);
+/// static_assert(std::is_same<nth_argument_type<Func, 0>::type, int>::value,
+/// "Unexpected type");
+template <typename Func, std::size_t N> struct nth_argument_type {
+  template <typename R, typename... Args>
+  static auto
+      helper(R(Args...)) -> std::tuple_element_t<N, std::tuple<Args...>>;
+  using type = decltype(helper(std::declval<Func>()));
+};
+
+/// \brief The function performs bitwise logical operations on three input
+/// values of \p a, \p b and \p c based on the specified 8-bit truth table \p
+/// lut and return the result
+///
+/// \param [in] a Input value
+/// \param [in] b Input value
+/// \param [in] c Input value
+/// \param [in] lut truth table for looking up
+/// \returns The result
+inline uint32_t ternary_logic_op(uint32_t a, uint32_t b, uint32_t c,
+                                 uint8_t lut) {
+  uint32_t result = 0;
+
+  switch (lut) {
+  case 0x0:
+    result = 0;
+    break;
+  case 0x1:
+    result = ~a & ~b & ~c;
+    break;
+  case 0x2:
+    result = ~a & ~b & c;
+  case 0x4:
+    result = ~a & b & ~c;
+    break;
+  case 0x8:
+    result = ~a & b & c;
+    break;
+  case 0x10:
+    result = a & ~b & ~c;
+    break;
+  case 0x20:
+    result = a & ~b & c;
+    break;
+  case 0x40:
+    result = a & b & ~c;
+    break;
+  case 0x80:
+    result = a & b & c;
+    break;
+  case 0x1a:
+    result = (a & b | c) ^ a;
+    break;
+  case 0x1e:
+    result = a ^ (b | c);
+    break;
+  case 0x2d:
+    result = ~a ^ (~b & c);
+    break;
+  case 0x78:
+    result = a ^ (b & c);
+    break;
+  case 0x96:
+    result = a ^ b ^ c;
+    break;
+  case 0xb4:
+    result = a ^ (b & ~c);
+    break;
+  case 0xb8:
+    result = a ^ (b & (c ^ a));
+    break;
+  case 0xd2:
+    result = a ^ (~b & c);
+    break;
+  case 0xe8:
+    result = a & (b | c) | (b & c);
+    break;
+  case 0xea:
+    result = a & b | c;
+    break;
+  case 0xfe:
+    result = a | b | c;
+    break;
+  case 0xff:
+    result = -1;
+    break;
+  default: {
+    if (lut & 0x01)
+      result |= ~a & ~b & ~c;
+    if (lut & 0x02)
+      result |= ~a & ~b & c;
+    if (lut & 0x04)
+      result |= ~a & b & ~c;
+    if (lut & 0x08)
+      result |= ~a & b & c;
+    if (lut & 0x10)
+      result |= a & ~b & ~c;
+    if (lut & 0x20)
+      result |= a & ~b & c;
+    if (lut & 0x40)
+      result |= a & b & ~c;
+    if (lut & 0x80)
+      result |= a & b & c;
+    break;
+  }
+  }
+
+  return result;
+}
 
 #ifdef _WIN32
 #define DPCT_EXPORT __declspec(dllexport)

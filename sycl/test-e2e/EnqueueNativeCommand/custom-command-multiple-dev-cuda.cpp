@@ -1,9 +1,7 @@
 // REQUIRES: cuda, cuda_dev_kit
+// REQUIRES: build-and-run-mode
 // RUN: %{build} -o %t.out %cuda_options
 // RUN: %{run} %t.out
-
-// TODO: Reenable, see https://github.com/intel/llvm/issues/14598
-// UNSUPPORTED: windows
 
 #include <cuda.h>
 

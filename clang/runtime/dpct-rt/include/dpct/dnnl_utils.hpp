@@ -9,21 +9,27 @@
 #ifndef __DPCT_DNNL_UTILS_HPP__
 #define __DPCT_DNNL_UTILS_HPP__
 
-#include <oneapi/dpl/algorithm>
-#include <oneapi/dpl/execution>
-#include <oneapi/dpl/numeric>
-#include <oneapi/mkl.hpp>
-#include <oneapi/mkl/rng/device.hpp>
-#include <sycl/sycl.hpp>
+#include "compat_service.hpp"
+#include "lib_common_utils.hpp"
+
 #include <oneapi/dnnl/dnnl.hpp>
 #include <oneapi/dnnl/dnnl_sycl.hpp>
-#include <unordered_map>
+
+#if defined(__has_include) && __has_include(<oneapi/math/rng/device.hpp>)
+#include <oneapi/math/rng/device.hpp>
+#elif defined(__has_include) && __has_include(<oneapi/mkl/rng/device.hpp>)
+#include <oneapi/mkl/rng/device.hpp>
+#elif defined(__has_include)
+#error "SYCLomatic runtime requires oneMath/oneMKL support"
+#else
+#error "SYCLomatic runtime requires __has_include support"
+#endif
+
 #include <algorithm>
 #include <list>
+#include <unordered_map>
 
-#include "memory.hpp"
-#include "device.hpp"
-#include "lib_common_utils.hpp"
+#include "detail/dnnl_utils_detail.hpp"
 
 namespace dpct {
 namespace dnnl {
@@ -683,7 +689,7 @@ class dropout_desc {
     void *_state = nullptr;
     std::vector<std::uint8_t> _host_state;
     rng_engine_t _rng_engine;
-    dropout_desc_imp() : _rng_engine(dpct::get_default_queue(), 1) {}
+    dropout_desc_imp() : _rng_engine(::dpct::cs::get_default_queue(), 1) {}
   };
   std::shared_ptr<dropout_desc_imp> _imp;
 
@@ -750,90 +756,6 @@ public:
                unsigned long long seed);
   friend class engine_ext;
 };
-
-namespace detail {
-typedef std::string primitive_cache_key_type;
-typedef std::list<primitive_cache_key_type> usage_list_type;
-struct primitive_cache_value_type {
-  ::dnnl::primitive *_primitive;
-  std::unordered_map<int, ::dnnl::memory> *_args;
-  usage_list_type::iterator _usage_it;
-  std::function<void(::dnnl::primitive *)> _destructor;
-  sycl::event _e;
-  sycl::queue _q;
-  primitive_cache_value_type(
-      ::dnnl::primitive *primitive,
-      std::unordered_map<int, ::dnnl::memory> *args,
-      usage_list_type::iterator usage_it,
-      std::function<void(::dnnl::primitive *)> destructor, sycl::event e,
-      sycl::queue q)
-      : _primitive(primitive), _args(args), _usage_it(usage_it),
-        _destructor(destructor), _e(e), _q(q) {}
-};
-struct primitive_and_args {
-  ::dnnl::primitive *primitive;
-  std::unordered_map<int, ::dnnl::memory> *args;
-};
-typedef std::unordered_map<primitive_cache_key_type,
-                           std::shared_ptr<primitive_cache_value_type>>
-    cache_map_type;
-
-// The primitive cache uses LRU replacement policy, and the default cache
-// capacity is 1024.
-class primitive_cache {
-  int _capacity = 1024;
-  usage_list_type usage;
-  cache_map_type cache_map;
-  void touch(cache_map_type::iterator it, sycl::event e = {},
-             bool update_event = false) {
-    if (it->second->_usage_it != usage.begin()) {
-      const primitive_cache_key_type &key = it->first;
-      usage.erase(it->second->_usage_it);
-      usage.push_front(key);
-      it->second->_usage_it = usage.begin();
-    }
-    if (update_event) {
-      it->second->_e = e;
-    }
-  }
-
-public:
-  std::shared_ptr<primitive_cache_value_type>
-  get(const primitive_cache_key_type &key) {
-    auto it = cache_map.find(key);
-    if (it == cache_map.end()) {
-      return nullptr;
-    }
-    touch(it);
-    return it->second;
-  }
-  void put(const primitive_cache_key_type &key, ::dnnl::primitive *value,
-           std::unordered_map<int, ::dnnl::memory> *args,
-           std::function<void(::dnnl::primitive *)> destructor, sycl::event e,
-           sycl::queue *q) {
-    auto it = cache_map.find(key);
-    if (it != cache_map.end()) {
-      touch(it, e, true);
-    } else {
-      if (cache_map.size() == _capacity) {
-        auto v = *(cache_map.find(usage.back())->second);
-        v._q.submit([=](sycl::handler &cgh) {
-          cgh.depends_on(v._e);
-          cgh.host_task([=] {
-            delete v._args;
-            v._destructor(v._primitive);
-          });
-        });
-        cache_map.erase(usage.back());
-        usage.pop_back();
-      }
-      usage.push_front(key);
-      cache_map[key] = std::make_shared<primitive_cache_value_type>(
-          value, args, usage.begin(), destructor, e, *q);
-    }
-  }
-};
-} // namespace detail
 
 /// A class holding the oneDNN engine.
 class engine_ext {
@@ -1023,20 +945,21 @@ class engine_ext {
     return q->fill<T>(static_cast<T *>(src), *static_cast<const T *>(value),
                       size_with_byte / sizeof(T));
   }
-  template <typename T> struct no_zero_op {
-    T operator()(T e) {
-      if (!e) {
-        return 1;
-      }
-      return e;
-    }
-  };
   template <typename T>
   void transform_no_zero_with_type(sycl::queue *q, void *src, void *dst,
                                    size_t num) {
-    std::transform(oneapi::dpl::execution::make_device_policy(*q),
-                   static_cast<T *>(src), static_cast<T *>(src) + num,
-                   static_cast<T *>(dst), no_zero_op<T>());
+    q->submit([&](sycl::handler &cgh) {
+      cgh.parallel_for<::dpct::cs::kernel_name<class zero_to_one, T>>(
+          sycl::range<1>(num), [=](sycl::id<1> idx) {
+            T *src_ptr = static_cast<T *>(src) + idx[0];
+            T *dst_ptr = static_cast<T *>(dst) + idx[0];
+            if (*src_ptr) {
+              *dst_ptr = *src_ptr;
+            } else {
+              *dst_ptr = 1;
+            }
+          });
+    });
   }
   void transform_no_zero(const memory_desc_ext &desc, void *src, void *dst);
   ::dnnl::memory::desc get_group_weight_desc(int group_count,
@@ -1067,9 +990,14 @@ public:
   }
   /// Creating oneDNN engine.
   void create_engine() {
-    _q = &dpct::get_current_device().default_queue();
+#if USE_DPCT_HELPER
+    _q = &::dpct::cs::get_current_device().default_queue();
+#else
+    _q = ::dpct::cs::get_current_device().default_queue();
+#endif
     _eng = std::make_shared<::dnnl::engine>(::dnnl::sycl_interop::make_engine(
-        dpct::get_current_device(), dpct::get_current_device().get_context()));
+        ::dpct::cs::get_current_device(),
+        ::dpct::cs::get_current_device().get_context()));
     _s = std::make_shared<::dnnl::stream>(
         ::dnnl::sycl_interop::make_stream(*_eng, *_q));
     _engine_id = _engine_count++;

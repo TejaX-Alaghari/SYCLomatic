@@ -92,6 +92,11 @@
 // RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
 
 // RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/compat_service.hpp  %S/../../runtime/dpct-rt/include/dpct/compat_service.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
 // RUN: diff %T/check_header_files/out/include/dpct/dpl_extras/algorithm.h  %S/../../runtime/dpct-rt/include/dpct/dpl_extras/algorithm.h >> %T/check_header_files/diff_res.txt
 // RUN: echo "end" >> %T/check_header_files/diff_res.txt
 // RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
@@ -133,6 +138,61 @@
 
 // RUN: echo "begin" > %T/check_header_files/diff_res.txt
 // RUN: diff %T/check_header_files/out/include/dpct/dpl_extras/iterator_adaptor.h  %S/../../runtime/dpct-rt/include/dpct/dpl_extras/iterator_adaptor.h >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/group_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/group_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/math_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/math_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/memory_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/memory_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/lib_common_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/lib_common_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/blas_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/blas_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/lapack_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/lapack_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/rng_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/rng_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/sparse_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/sparse_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/dnnl_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/dnnl_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/blas_gemm_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/blas_gemm_utils_detail.hpp >> %T/check_header_files/diff_res.txt
+// RUN: echo "end" >> %T/check_header_files/diff_res.txt
+// RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
+
+// RUN: echo "begin" > %T/check_header_files/diff_res.txt
+// RUN: diff %T/check_header_files/out/include/dpct/detail/ccl_utils_detail.hpp  %S/../../runtime/dpct-rt/include/dpct/detail/ccl_utils_detail.hpp >> %T/check_header_files/diff_res.txt
 // RUN: echo "end" >> %T/check_header_files/diff_res.txt
 // RUN: FileCheck %s --match-full-lines --input-file %T/check_header_files/diff_res.txt
 

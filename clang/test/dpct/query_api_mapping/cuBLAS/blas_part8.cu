@@ -16,7 +16,7 @@
 // cublasScalEx-NEXT:                alphatype /*cudaDataType*/, x /*void **/, xtype /*cudaDataType*/,
 // cublasScalEx-NEXT:                incx /*int*/, computetype /*cudaDataType*/);
 // cublasScalEx-NEXT: Is migrated to:
-// cublasScalEx-NEXT:   dpct::scal(handle->get_queue(), n, alpha, alphatype, x, xtype, incx);
+// cublasScalEx-NEXT:   dpct::blas::scal(handle, n, alpha, alphatype, x, xtype, incx);
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cublasDger | FileCheck %s -check-prefix=cublasDger
 // cublasDger: CUDA API:
@@ -158,7 +158,7 @@
 // cublasGetMatrixAsync-NEXT:                        a /*const void **/, lda /*int*/, b /*void **/,
 // cublasGetMatrixAsync-NEXT:                        ldb /*int*/, stream /*cudaStream_t*/);
 // cublasGetMatrixAsync-NEXT: Is migrated to:
-// cublasGetMatrixAsync-NEXT:   dpct::blas::matrix_mem_copy(b, a, ldb, lda, rows, cols, elementsize, dpct::automatic, *stream, true);
+// cublasGetMatrixAsync-NEXT:   dpct::blas::matrix_mem_copy(b, a, ldb, lda, rows, cols, elementsize, dpct::cs::memcpy_direction::automatic, *stream, true);
 
 // RUN: dpct --cuda-include-path="%cuda-path/include" --query-api-mapping=cublasDtrmm | FileCheck %s -check-prefix=cublasDtrmm
 // cublasDtrmm: CUDA API:

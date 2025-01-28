@@ -9,17 +9,16 @@
 #ifndef DPCT_ANALYSIS_INFO_H
 #define DPCT_ANALYSIS_INFO_H
 
-#include "Error.h"
-#include "ExprAnalysis.h"
+#include "ErrorHandle/Error.h"
+#include "RuleInfra/ExprAnalysis.h"
 #include "ExtReplacements.h"
-#include "InclusionHeaders.h"
-#include "LibraryAPIMigration.h"
-#include "Rules.h"
-#include "SaveNewFiles.h"
-#include "Statics.h"
+#include "RulesInclude/InclusionHeaders.h"
+#include "UserDefinedRules/UserDefinedRules.h"
+#include "FileGenerator/GenFiles.h"
+#include "MigrationReport/Statics.h"
 #include "TextModification.h"
 #include "Utility.h"
-#include "ValidateArguments.h"
+#include "CommandOption/ValidateArguments.h"
 #include <bitset>
 #include <memory>
 #include <optional>
@@ -44,6 +43,8 @@ void setGetReplacedNamePtr(llvm::StringRef (*Ptr)(const clang::NamedDecl *D));
 
 namespace clang {
 namespace dpct {
+
+using format::FormatRange;
 using LocInfo = std::pair<tooling::UnifiedPath, unsigned int>;
 template <class F, class... Ts>
 std::string buildStringFromPrinter(F Func, Ts &&...Args) {
@@ -56,7 +57,8 @@ std::string buildStringFromPrinter(F Func, Ts &&...Args) {
 enum class HelperFuncType : int {
   HFT_InitValue = 0,
   HFT_DefaultQueue = 1,
-  HFT_CurrentDevice = 2
+  HFT_CurrentDevice = 2,
+  HFT_DefaultQueuePtr = 3
 };
 
 enum class KernelArgType : int {
@@ -86,7 +88,6 @@ class KernelCallExpr;
 class DeviceFunctionInfo;
 class CallFunctionExpr;
 class DeviceFunctionDecl;
-class DeviceFunctionDeclInModule;
 class MemVarInfo;
 class VarInfo;
 class ExplicitInstantiationDecl;
@@ -179,7 +180,12 @@ struct CudaArchPPInfo {
   std::unordered_map<unsigned, DirectiveInfo> ElInfo;
   bool isInHDFunc = false;
 };
-
+// Field: The member field of user defined class type.
+// Base: The base class of user defined class type.
+// Alias: The alias name of user defined class type.
+// The enum is using to clarify the different user defined type when
+// migrate the codepin with user defined class.
+enum class CodePinVarInfoType { Field, Base, Alias };
 struct MemberOrBaseInfoForCodePin {
   bool UserDefinedTypeFlag = false;
   int PointerDepth = 0;
@@ -188,12 +194,15 @@ struct MemberOrBaseInfoForCodePin {
   std::string TypeNameInCuda;
   std::string TypeNameInSycl;
   std::string MemberName;
+  std::string CodePinMemberName;
 };
 
 struct VarInfoForCodePin {
   bool TemplateFlag = false;
   bool TopTypeFlag = false;
   bool IsValid = false;
+  bool IsTypeDef = false;
+  std::string OrgTypeName;
   std::string HashKey;
   std::string VarRecordType;
   std::string VarName;
@@ -227,6 +236,12 @@ struct RnnBackwardFuncInfo {
   std::string CompoundLoc;
   std::vector<std::string> RnnInputDeclLoc;
   std::vector<std::string> FuncArgs;
+};
+
+struct DeviceFunctionInfoForWrapper {
+  std::vector<std::pair<std::string, std::string>> ParametersInfo;
+  std::vector<std::pair<std::string, std::string>> TemplateParametersInfo;
+  std::shared_ptr<KernelCallExpr> KernelForWrapper;
 };
 
 // <function name, Info>
@@ -577,10 +592,14 @@ private:
   clang::tooling::UnifiedPath FilePath;
   std::string FileContentCache;
 
-  unsigned FirstIncludeOffset = 0;
+  // Save the FirstIncludeOffset in each MainFile
+  std::map<std::shared_ptr<DpctFileInfo> /*MainFile*/, unsigned>
+      FirstIncludeOffset;
   unsigned LastIncludeOffset = 0;
   const unsigned FileBeginOffset = 0;
-  bool HasInclusionDirective = false;
+  // Save the status whether FirstIncludeOffset is set by setFirstIncludeOffset
+  // for each MainFile
+  std::set<std::shared_ptr<DpctFileInfo> /*MainFile*/> HasInclusionDirectiveSet;
   std::vector<std::string> InsertedHeaders;
   std::vector<std::string> InsertedHeadersCUDA;
   std::bitset<32> HeaderInsertedBitMap;
@@ -624,6 +643,22 @@ public:
     bool IsInAnalysisScope;
     MacroDefRecord(SourceLocation NTL, bool IIAS);
   };
+  // This class is used to store information about macro arguments in a
+  // macro definition. For example, consider the macro definition:
+  // "#define CALL(x, y) x(y)".
+  // - For the first argument "x", the member ArgName will be "x", ArgLoc will
+  // be the source location of the token "x" in the macro definition, and
+  // ArgIndex will be 0.
+  // - For the second argument "y", the member ArgName will be "y", ArgLoc will
+  // be the source location of the token "y" in the macro definition, and
+  // ArgIndex will be 1.
+  class MacroArgRecord {
+  public:
+    std::string ArgName;
+    SourceLocation ArgLoc;
+    int ArgIndex;
+    MacroArgRecord(const MacroInfo *MI, int ArgIndex);
+  };
 
   class MacroExpansionRecord {
   public:
@@ -659,13 +694,17 @@ public:
         : DefaultQueueCounter(DefaultQueueCounter),
           CurrentDeviceCounter(CurrentDeviceCounter),
           PlaceholderStr{
-              "",
-              buildString(MapNames::getDpctNamespace(), "get_",
-                          DpctGlobalInfo::getDeviceQueueName(), "()"),
-              MapNames::getDpctNamespace() + "get_current_device()"} {}
+              "", DpctGlobalInfo::getDefaultQueueFreeFuncCall(),
+              MapNames::getDpctNamespace() + "get_current_device()",
+              (DpctGlobalInfo::useSYCLCompat()
+                   ? buildString(MapNames::getDpctNamespace() +
+                                 "get_current_device().default_queue()")
+                   : buildString(
+                         "&", DpctGlobalInfo::getDefaultQueueFreeFuncCall()))} {
+    }
     int DefaultQueueCounter = 0;
     int CurrentDeviceCounter = 0;
-    std::string PlaceholderStr[3];
+    std::string PlaceholderStr[4];
   };
 
   static std::string removeSymlinks(clang::FileManager &FM,
@@ -673,12 +712,15 @@ public:
   static bool isInRoot(SourceLocation SL) {
     return isInRoot(DpctGlobalInfo::getLocInfo(SL).first);
   }
-  static bool isInRoot(clang::tooling::UnifiedPath FilePath);
+  static bool isInRoot(const clang::tooling::UnifiedPath &FilePath);
   static bool isInAnalysisScope(SourceLocation SL) {
     return isInAnalysisScope(DpctGlobalInfo::getLocInfo(SL).first);
   }
-  static bool isInAnalysisScope(clang::tooling::UnifiedPath FilePath) {
-    return isChildPath(AnalysisScope, FilePath);
+  static bool isInAnalysisScope(const clang::tooling::UnifiedPath &FilePath) {
+    return std::any_of(AnalysisScope.begin(), AnalysisScope.end(),
+                       [&](const clang::tooling::UnifiedPath &P) {
+                         return isChildPath(P, FilePath);
+                       });
   }
   static bool isExcluded(const clang::tooling::UnifiedPath &FilePath);
   // TODO: implement one of this for each source language.
@@ -696,11 +738,11 @@ public:
     OutRoot = OutRootPath;
   }
   static const clang::tooling::UnifiedPath &getOutRoot() { return OutRoot; }
-  static void
-  setAnalysisScope(const clang::tooling::UnifiedPath &InputAnalysisScope) {
+  static void setAnalysisScope(
+      const std::vector<clang::tooling::UnifiedPath> &InputAnalysisScope) {
     AnalysisScope = InputAnalysisScope;
   }
-  static const clang::tooling::UnifiedPath &getAnalysisScope() {
+  static const std::vector<clang::tooling::UnifiedPath> &getAnalysisScope() {
     return AnalysisScope;
   }
   static void addChangeExtensions(const std::string &Extension) {
@@ -740,7 +782,8 @@ public:
   static std::string getSubGroup(const Stmt *,
                                  const FunctionDecl *FD = nullptr);
   static std::string getDefaultQueue(const Stmt *);
-  static const std::string &getDeviceQueueName();
+  static const std::string &getDefaultQueueFreeFuncCall();
+  static const std::string &getDefaultQueueMemFuncName();
   static const std::string &getStreamName() {
     const static std::string StreamName = "stream" + getCTFixedSuffix();
     return StreamName;
@@ -789,8 +832,17 @@ public:
   static unsigned int getKCIndentWidth();
   static UsmLevel getUsmLevel() { return UsmLvl; }
   static void setUsmLevel(UsmLevel UL) { UsmLvl = UL; }
-  static BuildScriptKind getBuildScript() { return BuildScriptVal; }
-  static void setBuildScript(BuildScriptKind BSVal) { BuildScriptVal = BSVal; }
+  static unsigned getBuildScript() { return BuildScriptType; }
+  static void setBuildScript(unsigned BS_type) { BuildScriptType = BS_type; }
+  template <BuildScriptKind BS_kind> static bool getMigrateBuildScriptType() {
+    return BuildScriptType & (1 << static_cast<unsigned>(BS_kind));
+  }
+  static bool migrateCMakeScripts() {
+    return getMigrateBuildScriptType<BuildScriptKind::BS_CMake>();
+  }
+  static bool migratePythonScripts() {
+    return getMigrateBuildScriptType<BuildScriptKind::BS_Python>();
+  }
   static clang::CudaVersion getSDKVersion() { return SDKVersion; }
   static void setSDKVersion(clang::CudaVersion V) { SDKVersion = V; }
   static bool isIncMigration() { return IsIncMigration; }
@@ -864,11 +916,6 @@ public:
   static std::unordered_map<std::string, bool> getExcludePath() {
     return ExcludePath;
   }
-  static std::set<ExplicitNamespace> getExplicitNamespaceSet() {
-    return ExplicitNamespaceSet;
-  }
-  static void
-  setExplicitNamespace(std::vector<ExplicitNamespace> NamespacesVec);
   static bool isCtadEnabled() { return EnableCtad; }
   static void setCtadEnabled(bool Enable) { EnableCtad = Enable; }
   static bool isCodePinEnabled() { return EnableCodePin; }
@@ -967,10 +1014,14 @@ public:
       return Cur.get<TargetTy>();
     });
   }
-  template <class TargetTy, class NodeTy>
+  template <class TargetTy, class NodeTy, class... SkipNodeTy>
   static auto findParent(const NodeTy *Node) {
-    return findAncestor<TargetTy>(
-        Node, [](const DynTypedNode &Cur) -> bool { return true; });
+    return findAncestor<TargetTy>(Node, [](const DynTypedNode &Cur) -> bool {
+      if ((... || Cur.get<SkipNodeTy>())) {
+        return false;
+      }
+      return true;
+    });
   }
 
   template <typename TargetTy, typename NodeTy>
@@ -1046,16 +1097,21 @@ public:
   getAbsolutePath(FileEntryRef File);
   static std::pair<clang::tooling::UnifiedPath, unsigned>
   getLocInfo(SourceLocation Loc, bool *IsInvalid = nullptr /* out */);
-  static std::string getTypeName(QualType QT, const ASTContext &Context);
-  static std::string getTypeName(QualType QT) {
-    return getTypeName(QT, DpctGlobalInfo::getContext());
+  static std::string getTypeName(QualType QT, const ASTContext &Context,
+                                 bool SuppressScope = false);
+  static std::string getTypeName(QualType QT, bool SuppressScope = false) {
+    return getTypeName(QT, DpctGlobalInfo::getContext(), SuppressScope);
   }
   static std::string getUnqualifiedTypeName(QualType QT,
                                             const ASTContext &Context) {
-    return getTypeName(QT.getUnqualifiedType(), Context);
+    return getTypeName(QT.getUnqualifiedType(), Context, false);
   }
   static std::string getUnqualifiedTypeName(QualType QT) {
     return getUnqualifiedTypeName(QT, DpctGlobalInfo::getContext());
+  }
+  static std::string getUnqualifiedAndUnScopeTypeName(QualType QT) {
+    return getTypeName(QT.getUnqualifiedType(), DpctGlobalInfo::getContext(),
+                       true);
   }
   /// This function will return the replaced type name with qualifiers.
   /// Currently, since clang do not support get the order of original
@@ -1098,8 +1154,6 @@ public:
   std::shared_ptr<DeviceFunctionDecl> insertDeviceFunctionDecl(
       const FunctionDecl *Specialization, const FunctionTypeLoc &FTL,
       const ParsedAttributes &Attrs, const TemplateArgumentListInfo &TAList);
-  std::shared_ptr<DeviceFunctionDecl>
-  insertDeviceFunctionDeclInModule(const FunctionDecl *FD);
 
   // Build kernel and device function declaration replacements and store
   // them.
@@ -1175,12 +1229,17 @@ public:
   getExpansionRangeBeginMap() {
     return ExpansionRangeBeginMap;
   }
+  static std::unordered_map<std::string, std::shared_ptr<MacroArgRecord>> &
+  getMacroArgRecordMap() {
+    return MacroArgRecordMap;
+  }
   static std::map<std::string, std::shared_ptr<MacroExpansionRecord>> &
   getExpansionRangeToMacroRecord() {
     return ExpansionRangeToMacroRecord;
   }
-  static std::map<std::string, std::shared_ptr<DpctGlobalInfo::MacroDefRecord>>
-      &getMacroTokenToMacroDefineLoc() {
+  static std::map<std::string,
+                  std::shared_ptr<DpctGlobalInfo::MacroDefRecord>> &
+  getMacroTokenToMacroDefineLoc() {
     return MacroTokenToMacroDefineLoc;
   }
   static std::map<std::string, std::string> &
@@ -1212,8 +1271,9 @@ public:
   getFileRelpsMap() {
     return FileRelpsMap;
   }
-  static std::unordered_map<std::string, std::string> &getDigestMap() {
-    return DigestMap;
+  static std::unordered_map<std::string, clang::tooling::MainSourceFileInfo> &
+  getMsfInfoMap() {
+    return MsfInfoMap;
   }
   static std::string getYamlFileName() { return YamlFileName; }
   static std::set<std::string> &getGlobalVarNameSet() {
@@ -1240,6 +1300,9 @@ public:
   static void setUsingDRYPattern(bool Flag) { UsingDRYPattern = Flag; }
   static bool useNdRangeBarrier() {
     return getUsingExperimental<ExperimentalFeatures::Exp_NdRangeBarrier>();
+  }
+  static bool useRootGroup() {
+    return getUsingExperimental<ExperimentalFeatures::Exp_RootGroup>();
   }
   static bool useFreeQueries() {
     return getUsingExperimental<ExperimentalFeatures::Exp_FreeQueries>();
@@ -1283,9 +1346,26 @@ public:
   static bool useExpDeviceGlobal() {
     return getUsingExperimental<ExperimentalFeatures::Exp_DeviceGlobal>();
   }
+  static bool useExpVirtualMemory() {
+    return getUsingExperimental<ExperimentalFeatures::Exp_VirtualMemory>();
+  }
+  static bool useExpInOrderQueueEvents() {
+    return getUsingExperimental<ExperimentalFeatures::Exp_InOrderQueueEvents>();
+  }
+  static bool useExpNonStandardSYCLBuiltins() {
+    return getUsingExperimental<
+        ExperimentalFeatures::Exp_NonStandardSYCLBuiltins>();
+  }
+  static bool useExtPrefetch() {
+    return getUsingExperimental<ExperimentalFeatures::Exp_Prefetch>();
+  }
   static bool useNoQueueDevice() {
     return getHelperFuncPreference(HelperFuncPreference::NoQueueDevice);
   }
+  static void setCVersionCUDALaunchUsed() { CVersionCUDALaunchUsedFlag = true; }
+  static bool isCVersionCUDALaunchUsed() { return CVersionCUDALaunchUsedFlag; }
+  static void setUseSYCLCompat(bool Flag = true) { UseSYCLCompatFlag = Flag; }
+  static bool useSYCLCompat() { return UseSYCLCompatFlag; }
   static bool useEnqueueBarrier() {
     return getUsingExtensionDE(
         DPCPPExtensionsDefaultEnabled::ExtDE_EnqueueBarrier);
@@ -1312,6 +1392,10 @@ public:
   }
   static bool useBFloat16() {
     return getUsingExtensionDE(DPCPPExtensionsDefaultEnabled::ExtDE_BFloat16);
+  }
+  static std::unordered_set<std::string> &
+  getCustomHelperFunctionAddtionalIncludes() {
+    return CustomHelperFunctionAddtionalIncludes;
   }
   std::shared_ptr<DpctFileInfo>
   insertFile(const clang::tooling::UnifiedPath &FilePath) {
@@ -1413,6 +1497,7 @@ public:
   static bool isNeedParenAPI(const std::string &Name) {
     return NeedParenAPISet.count(Name);
   }
+  static void printUsingNamespace(llvm::raw_ostream &);
   // #tokens, name of the second token, SourceRange of a macro
   static std::tuple<unsigned int, std::string, SourceRange> LastMacroRecord;
 
@@ -1470,7 +1555,7 @@ private:
     return FD->getLocation();
   }
   static SourceLocation getLocation(const CallExpr *CE) {
-    return CE->getEndLoc();
+    return getDefinitionRange(CE->getBeginLoc(), CE->getEndLoc()).getEnd();
   }
   // The result will be also stored in KernelCallExpr.BeginLoc
   static SourceLocation getLocation(const CUDAKernelCallExpr *CKC) {
@@ -1486,7 +1571,7 @@ private:
       MainSourceYamlTUR;
   static clang::tooling::UnifiedPath InRoot;
   static clang::tooling::UnifiedPath OutRoot;
-  static clang::tooling::UnifiedPath AnalysisScope;
+  static std::vector<clang::tooling::UnifiedPath> AnalysisScope;
   static std::unordered_set<std::string> ChangeExtensions;
   static std::string SYCLSourceExtension;
   static std::string SYCLHeaderExtension;
@@ -1494,7 +1579,7 @@ private:
   static clang::tooling::UnifiedPath CudaPath;
   static std::string RuleFile;
   static UsmLevel UsmLvl;
-  static BuildScriptKind BuildScriptVal;
+  static unsigned BuildScriptType;
   static clang::CudaVersion SDKVersion;
   static bool NeedDpctDeviceExt;
   static bool IsIncMigration;
@@ -1509,7 +1594,6 @@ private:
   static bool GenBuildScript;
   static bool MigrateBuildScriptOnly;
   static bool EnableComments;
-  static std::set<ExplicitNamespace> ExplicitNamespaceSet;
 
   // This variable is only set true when option "--report-type=stats" or option
   // " --report-type=all" is specified to get the migration status report, while
@@ -1536,6 +1620,11 @@ private:
   static std::map<std::string,
                   std::shared_ptr<DpctGlobalInfo::MacroExpansionRecord>>
       ExpansionRangeToMacroRecord;
+  // key: The hash string of the location of function-like macro argument
+  // value: Function-like macro argument information
+  static std::unordered_map<std::string,
+                            std::shared_ptr<DpctGlobalInfo::MacroArgRecord>>
+      MacroArgRecordMap;
   static std::map<std::string, SourceLocation> EndifLocationOfIfdef;
   static std::vector<std::pair<clang::tooling::UnifiedPath, size_t>>
       ConditionalCompilationLoc;
@@ -1552,7 +1641,8 @@ private:
   static std::unordered_map<std::string,
                             std::vector<clang::tooling::Replacement>>
       FileRelpsMap;
-  static std::unordered_map<std::string, std::string> DigestMap;
+  static std::unordered_map<std::string, clang::tooling::MainSourceFileInfo>
+      MsfInfoMap;
   static const std::string YamlFileName;
   static std::map<std::string, bool> MacroDefines;
   static int CurrentMaxIndex;
@@ -1595,6 +1685,8 @@ private:
   static unsigned ExperimentalFlag;
   static unsigned HelperFuncPreferenceFlag;
   static bool AnalysisModeFlag;
+  static bool UseSYCLCompatFlag;
+  static bool CVersionCUDALaunchUsedFlag;
   static unsigned int ColorOption;
   static std::unordered_map<int, std::shared_ptr<DeviceFunctionInfo>>
       CubPlaceholderIndexMap;
@@ -1626,6 +1718,7 @@ private:
   static std::vector<std::pair<std::string, std::vector<std::string>>>
       CodePinDumpFuncDepsVec;
   static std::unordered_set<std::string> NeedParenAPISet;
+  static std::unordered_set<std::string> CustomHelperFunctionAddtionalIncludes;
 };
 
 /// Generate mangle name of FunctionDecl as key of DeviceFunctionInfo.
@@ -1859,7 +1952,7 @@ public:
   bool isUseHelperFunc() { return UseHelperFuncFlag; }
   void setUseDeviceGlobalFlag(bool Flag) { UseDeviceGlobalFlag = Flag; }
   bool isUseDeviceGlobal() { return UseDeviceGlobalFlag; }
-  void setInitForDeviceGlobal(std::string Init) { InitList = Init; }
+  void migrateToDeviceGlobal(const VarDecl *MemVar);
 
 private:
   bool isTreatPointerAsArray() {
@@ -1890,13 +1983,7 @@ private:
   // Constant scalar variables are passed by value while other 0/1D variables
   // defined on device memory are passed by pointer in device function calls.
   // The rest are passed by accessor.
-  enum DpctAccessMode {
-    Value,
-    Pointer,
-    Accessor,
-    Reference,
-    PointerToArray
-  };
+  enum DpctAccessMode { Value, Pointer, Accessor, Reference, PointerToArray };
 
 private:
   VarAttrKind Attr;
@@ -1980,8 +2067,9 @@ public:
   virtual std::string getHostDeclString();
   virtual std::string getSamplerDecl();
   virtual std::string getAccessorDecl(const std::string &QueueStr);
-  virtual void addDecl(StmtList &AccessorList, StmtList &SamplerList,
-                       const std::string &QueueStr);
+  virtual std::string InitDecl(const std::string &QueueStr);
+  virtual void addDecl(StmtList &InitList, StmtList &AccessorList,
+                       StmtList &SamplerList, const std::string &QueueStr);
   ParameterStream &getFuncDecl(ParameterStream &PS);
   ParameterStream &getFuncArg(ParameterStream &PS);
   virtual ParameterStream &getKernelArg(ParameterStream &OS);
@@ -1991,7 +2079,7 @@ public:
   bool isUseHelperFunc() { return true; }
 };
 
-// texture handle info
+// texture object info can be used for CUDA texture and surface objects.
 class TextureObjectInfo : public TextureInfo {
   static const int ReplaceTypeLength;
 
@@ -2021,6 +2109,7 @@ public:
 
   virtual ~TextureObjectInfo() = default;
   std::string getAccessorDecl(const std::string &QueueString) override;
+  std::string InitDecl(const std::string &QueueStr) override;
   std::string getSamplerDecl() override;
   inline unsigned getParamIdx() const { return ParamIdx; }
   std::string getParamDeclType();
@@ -2065,8 +2154,8 @@ class MemberTextureObjectInfo : public TextureObjectInfo {
 
 public:
   static std::shared_ptr<MemberTextureObjectInfo> create(const MemberExpr *ME);
-  void addDecl(StmtList &AccessorList, StmtList &SamplerList,
-               const std::string &QueueStr) override;
+  void addDecl(StmtList &InitList, StmtList &AccessorList,
+               StmtList &SamplerList, const std::string &QueueStr) override;
   void setBaseName(StringRef Name) { BaseName = Name; }
   StringRef getMemberName() { return MemberName; }
 };
@@ -2090,8 +2179,8 @@ public:
   bool isBase() const { return IsBase; }
   bool containsVirtualPointer() const { return ContainsVirtualPointer; }
   std::shared_ptr<MemberTextureObjectInfo> addMember(const MemberExpr *ME);
-  void addDecl(StmtList &AccessorList, StmtList &SamplerList,
-               const std::string &Queue) override;
+  void addDecl(StmtList &InitList, StmtList &AccessorList,
+               StmtList &SamplerList, const std::string &Queue) override;
   void addParamDeclReplacement() override { return; };
   void merge(std::shared_ptr<StructureTextureObjectInfo> Target);
   void merge(std::shared_ptr<TextureObjectInfo> Target) override;
@@ -2144,14 +2233,26 @@ private:
 };
 
 class TempStorageVarInfo {
+public:
+  enum APIKind {
+    BlockReduce,
+    BlockRadixSort,
+    BlockShuffle,
+  };
+
+private:
   unsigned Offset;
+  APIKind Kind;
   std::string Name;
-  std::shared_ptr<TemplateDependentStringInfo> Type;
+  std::string TmpMemSizeCalFn;
+  std::shared_ptr<TemplateDependentStringInfo> ValueType;
 
 public:
-  TempStorageVarInfo(unsigned Off, StringRef Name,
-                     std::shared_ptr<TemplateDependentStringInfo> T)
-      : Offset(Off), Name(Name.str()), Type(T) {}
+  TempStorageVarInfo(unsigned Off, APIKind Kind, StringRef Name,
+                     std::string TmpMemSizeCalFn,
+                     std::shared_ptr<TemplateDependentStringInfo> ValT)
+      : Offset(Off), Kind(Kind), Name(Name.str()),
+        TmpMemSizeCalFn(TmpMemSizeCalFn), ValueType(ValT) {}
   const std::string &getName() const { return Name; }
   unsigned getOffset() const { return Offset; }
   void addAccessorDecl(StmtList &AccessorList, StringRef LocalSize) const;
@@ -2490,7 +2591,8 @@ public:
       LinkDecl(D, List, Info);
   }
   void setFuncInfo(std::shared_ptr<DeviceFunctionInfo> Info);
-
+  void insertWrapper();
+  void collectInfoForWrapper(const FunctionDecl *FD);
   virtual ~DeviceFunctionDecl() = default;
 
 protected:
@@ -2513,7 +2615,10 @@ protected:
   bool IsDefFilePathNeeded = false;
   std::vector<std::shared_ptr<TextureObjectInfo>> TextureObjectList;
   FormatInfo FormatInformation;
-
+  bool HasBody = false;
+  size_t DeclEnd = 0;
+  std::map<int, std::string> TemplateParameterDefaultValueMap;
+  std::map<int, std::string> ParameterDefaultValueMap;
   static std::shared_ptr<DeviceFunctionInfo> &getFuncInfo(const FunctionDecl *);
   static std::unordered_map<std::string, std::shared_ptr<DeviceFunctionInfo>>
       FuncInfoMap;
@@ -2542,32 +2647,6 @@ private:
   void initTemplateArgumentList(const TemplateArgumentListInfo &TAList,
                                 const FunctionDecl *Specialization);
   std::string getExtraParameters(LocInfo LI) override;
-};
-
-class DeviceFunctionDeclInModule : public DeviceFunctionDecl {
-  void insertWrapper();
-  bool HasBody = false;
-  size_t DeclEnd;
-  std::string FuncName;
-  std::vector<std::pair<std::string, std::string>> ParametersInfo;
-  std::shared_ptr<KernelCallExpr> Kernel;
-  void buildParameterInfo(const FunctionDecl *FD);
-  void buildWrapperInfo(const FunctionDecl *FD);
-  void buildCallInfo(const FunctionDecl *FD);
-  std::vector<std::pair<std::string, std::string>> &getParametersInfo() {
-    return ParametersInfo;
-  }
-
-public:
-  DeviceFunctionDeclInModule(unsigned Offset,
-                             const clang::tooling::UnifiedPath &FilePathIn,
-                             const FunctionTypeLoc &FTL,
-                             const ParsedAttributes &Attrs,
-                             const FunctionDecl *FD);
-  DeviceFunctionDeclInModule(unsigned Offset,
-                             const clang::tooling::UnifiedPath &FilePathIn,
-                             const FunctionDecl *FD);
-  void emplaceReplacement() override;
 };
 
 // device function info includes parameters num, memory variable and call
@@ -2669,6 +2748,13 @@ public:
   bool isParameterReferenced(unsigned int Index);
   void setParameterReferencedStatus(unsigned int Index, bool IsReferenced);
   std::string getFunctionName() { return FunctionName; }
+  void collectInfoForWrapper(const FunctionDecl *FD);
+  void setModuleUsed() { ModuleUsed = true; }
+  bool isModuleUsed() { return ModuleUsed; }
+  std::shared_ptr<DeviceFunctionInfoForWrapper>
+  getDeviceFunctionInfoForWrapper() {
+    return DFInfoForWrapper;
+  }
 
 private:
   void mergeCalledTexObj(
@@ -2701,12 +2787,15 @@ private:
   bool CallGroupFunctionInControlFlow = false;
   bool HasCheckedCallGroupFunctionInControlFlow = false;
   OverloadedOperatorKind OO_Kind = OverloadedOperatorKind::OO_None;
+  bool ModuleUsed = false;
+  std::shared_ptr<DeviceFunctionInfoForWrapper> DFInfoForWrapper = nullptr;
 };
 
 class KernelCallExpr : public CallFunctionExpr {
 public:
   bool IsInMacroDefine = false;
   bool NeedLambda = false;
+  bool IsForWrapper = false;
   bool NeedDefaultRetValue = false;
 
 private:
@@ -2716,7 +2805,8 @@ private:
     ArgInfo(const ParmVarDecl *PVD, const std::string &ArgsArrayName,
             KernelCallExpr *Kernel);
     ArgInfo(const ParmVarDecl *PVD, KernelCallExpr *Kernel);
-    ArgInfo(std::shared_ptr<TextureObjectInfo> Obj, KernelCallExpr *BASE);
+    ArgInfo(std::shared_ptr<TextureObjectInfo> Obj, KernelCallExpr *BASE,
+            std::string ArgStr);
     inline const std::string &getArgString() const;
     inline const std::string &getTypeString() const;
     inline std::string getIdStringWithIndex() const {
@@ -2739,13 +2829,14 @@ private:
     bool IsDeviceRandomGeneratorType = false;
     bool HasImplicitConversion = false;
     bool IsDoublePointer = false;
+    bool IsDependentType = false;
 
     std::shared_ptr<TextureObjectInfo> Texture;
   };
 
   void print(KernelPrinter &Printer);
   void printSubmit(KernelPrinter &Printer);
-  void printSubmitLamda(KernelPrinter &Printer);
+  void printSubmitLambda(KernelPrinter &Printer);
   void printParallelFor(KernelPrinter &Printer, bool IsInSubmit);
   void printKernel(KernelPrinter &Printer);
   template <typename IDTy, typename... Ts>
@@ -2777,8 +2868,10 @@ public:
       const std::pair<clang::tooling::UnifiedPath, unsigned> &LocInfo,
       const CallExpr *, bool IsAssigned = false);
   static std::shared_ptr<KernelCallExpr>
-  buildForWrapper(clang::tooling::UnifiedPath, const FunctionDecl *,
-                  std::shared_ptr<DeviceFunctionInfo>);
+  buildForWrapper(clang::tooling::UnifiedPath, const FunctionDecl *);
+  void setTemplateArgsStrForWrapper(std::string Str) {
+    TemplateArgsStrForWrapper = std::move(Str);
+  }
   unsigned int GridDim = 3;
   unsigned int BlockDim = 3;
   void setEmitSizeofWarningFlag(bool Flag) { EmitSizeofWarning = Flag; }
@@ -2809,6 +2902,7 @@ private:
 
   void removeExtraIndent();
   void addDevCapCheckStmt();
+  void addPropertiesStmt();
   void addAccessorDecl(MemVarInfo::VarScope Scope);
   void addAccessorDecl(std::shared_ptr<MemVarInfo> VI);
   void addStreamDecl();
@@ -2832,6 +2926,7 @@ private:
     std::string GroupSizeFor1D = "";
     std::string LocalSizeFor1D = "";
     std::string &NdRange = Config[4];
+    std::string Properties = "";
     std::string &SubGroupSize = Config[5];
     bool IsDefaultStream = false;
     bool IsQueuePtr = true;
@@ -2854,7 +2949,8 @@ private:
     StmtList SamplerList;
     StmtList NdRangeList;
     StmtList CommandGroupList;
-
+    bool ImplicitSyncFlag = false;
+    bool DefaultStreamFlag = false;
     KernelPrinter &print(KernelPrinter &Printer);
     bool empty() const noexcept;
 
@@ -2880,6 +2976,7 @@ private:
   OuterStmtsList OuterStmts;
   StmtList KernelStmts;
   std::string KernelArgs;
+  std::string TemplateArgsStrForWrapper;
   int TotalArgsSize = 0;
   bool EmitSizeofWarning = false;
   unsigned int SizeOfHighestDimension = 0;
@@ -3039,19 +3136,15 @@ inline void buildTempVariableMap(int Index, const T *S, HelperFuncType HFT) {
   std::string KeyForDeclCounter = HFInfo.DeclLocFile.getCanonicalPath().str() +
                                   ":" + std::to_string(HFInfo.DeclLocOffset);
 
-  if (DpctGlobalInfo::getTempVariableDeclCounterMap().count(
-          KeyForDeclCounter) == 0) {
-    DpctGlobalInfo::getTempVariableDeclCounterMap().insert(
-        {KeyForDeclCounter, {}});
-  }
-  auto Iter =
-      DpctGlobalInfo::getTempVariableDeclCounterMap().find(KeyForDeclCounter);
+  auto &Counter =
+      DpctGlobalInfo::getTempVariableDeclCounterMap()[KeyForDeclCounter];
   switch (HFT) {
   case HelperFuncType::HFT_DefaultQueue:
-    ++Iter->second.DefaultQueueCounter;
+  case HelperFuncType::HFT_DefaultQueuePtr:
+    ++Counter.DefaultQueueCounter;
     break;
   case HelperFuncType::HFT_CurrentDevice:
-    ++Iter->second.CurrentDeviceCounter;
+    ++Counter.CurrentDeviceCounter;
     break;
   default:
     break;

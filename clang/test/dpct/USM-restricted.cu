@@ -2,7 +2,7 @@
 // UNSUPPORTED: system-windows
 // RUN: dpct --format-range=none --usm-level=restricted -out-root %T/USM-restricted %s --cuda-include-path="%cuda-path/include" -- -std=c++14 -x cuda --cuda-host-only
 // RUN: FileCheck --match-full-lines --input-file %T/USM-restricted/USM-restricted.dp.cpp %s
-// RUN: %if build_lit %{icpx -c -fsycl -DBUILD_TEST %T/USM-restricted/USM-restricted.dp.cpp -o %T/USM-restricted/USM-restricted.dp.o %}
+// RUN: %if build_lit %{icpx -c -fsycl -DNO_BUILD_TEST %T/USM-restricted/USM-restricted.dp.cpp -o %T/USM-restricted/USM-restricted.dp.o %}
 
 // CHECK: #include <sycl/sycl.hpp>
 // CHECK-NEXT: #include <dpct/dpct.hpp>
@@ -152,7 +152,7 @@ void foo() {
   MY_SAFE_CALL2(cudaMemcpy(d_A, h_A, foo_b(1), MACOR_C(1)));
 
 #define SIZE 100
-  // CHECK: q_ct1.memcpy( d_A, h_A, sizeof(double)*SIZE*SIZE ).wait();
+  // CHECK: q_ct1.memcpy(d_A, h_A, sizeof(double)*SIZE*SIZE).wait();
   cudaMemcpy( d_A, h_A, sizeof(double)*SIZE*SIZE, cudaMemcpyDeviceToHost );
 
   /// memcpy async
@@ -185,7 +185,7 @@ void foo() {
 
   // CHECK: dpct::dpct_memcpy(parms);
   cudaMemcpy3D(&parms);
-#ifndef BUILD_TEST
+#ifndef NO_BUILD_TEST
   struct cudaMemcpy3DParms *parms_pointer;
   // Followed call can't be processed.
   cudaMemcpy3D(parms_pointer);
@@ -377,6 +377,10 @@ void foo() {
   errorCode = cuMemHostGetDevicePointer(D_ptr, h_A, 0);
   // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(*D_ptr = (dpct::device_ptr)h_A));
   MY_SAFE_CALL(cuMemHostGetDevicePointer(D_ptr, h_A, 0));
+
+  unsigned long long addr;
+  // CHECK: *(dpct::device_ptr *)&addr = (dpct::device_ptr)h_A;
+  cuMemHostGetDevicePointer((CUdeviceptr *)&addr, h_A, 0);
 
   cudaHostRegister(h_A, size, 0);
   // CHECK: errorCode = 0;
@@ -801,15 +805,15 @@ void foo3() {
   MY_SAFE_CALL(cudaMemset3DAsync(p_A, 0xf, e, cudaStreamPerThread));
 
 
-  // CHECK: dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100);
-  // CHECK: dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100);
-  // CHECK: dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100);
-  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100));
-  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100));
-  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100));
-  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100)));
-  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100)));
-  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(deviceID).in_order_queue().prefetch(d_A,100)));
+  // CHECK: dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100);
+  // CHECK: dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100);
+  // CHECK: dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100);
+  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100));
+  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100));
+  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100));
+  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100)));
+  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100)));
+  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::get_device(deviceID).in_order_queue().prefetch(d_A,100)));
   cudaMemPrefetchAsync (d_A, 100, deviceID, cudaStreamDefault);
   cudaMemPrefetchAsync (d_A, 100, deviceID, cudaStreamLegacy);
   cudaMemPrefetchAsync (d_A, 100, deviceID, cudaStreamPerThread);
@@ -823,15 +827,15 @@ void foo3() {
   CUdevice cudevice = 0;
   // CHECK: dpct::device_ptr devPtr;
   CUdeviceptr devPtr;
-  // CHECK: dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100);
-  // CHECK: dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100);
-  // CHECK: dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100);
-  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100));
-  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100));
-  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100));
-  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100)));
-  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100)));
-  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::dev_mgr::instance().get_device(cudevice).in_order_queue().prefetch(devPtr, 100)));
+  // CHECK: dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100);
+  // CHECK: dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100);
+  // CHECK: dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100);
+  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100));
+  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100));
+  // CHECK: errorCode = DPCT_CHECK_ERROR(dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100));
+  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100)));
+  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100)));
+  // CHECK: MY_SAFE_CALL(DPCT_CHECK_ERROR(dpct::get_device(cudevice).in_order_queue().prefetch(devPtr, 100)));
   cuMemPrefetchAsync (devPtr, 100, cudevice, cudaStreamDefault);
   cuMemPrefetchAsync (devPtr, 100, cudevice, cudaStreamLegacy);
   cuMemPrefetchAsync (devPtr, 100, cudevice, cudaStreamPerThread);

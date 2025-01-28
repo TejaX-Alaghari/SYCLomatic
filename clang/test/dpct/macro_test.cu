@@ -7,9 +7,9 @@
 // RUN: mkdir %T/macro_test_output
 // RUN: dpct -out-root %T/macro_test_output macro_test.cu --cuda-include-path="%cuda-path/include" -- -x cuda --cuda-host-only
 // RUN: FileCheck --input-file %T/macro_test_output/macro_test.dp.cpp --match-full-lines macro_test.cu
-// RUN: %if build_lit %{icpx -c -fsycl -DBUILD_TEST  %T/macro_test_output/macro_test.dp.cpp -o %T/macro_test_output/macro_test.dp.o %}
+// RUN: %if build_lit %{icpx -c -fsycl -DNO_BUILD_TEST  %T/macro_test_output/macro_test.dp.cpp -o %T/macro_test_output/macro_test.dp.o %}
 // RUN: FileCheck --input-file %T/macro_test_output/macro_test.h --match-full-lines macro_test.h
-#ifndef BUILD_TEST
+#ifndef NO_BUILD_TEST
 #include "cuda.h"
 #include <math.h>
 #include <iostream>
@@ -190,7 +190,7 @@ void foo() {
 // CHECK-NEXT:     if (err != 0) \
 // CHECK-NEXT:     { \
 // CHECK-NEXT:         int currentDevice; \
-// CHECK-NEXT:         currentDevice = dpct::dev_mgr::instance().current_device_id(); \
+// CHECK-NEXT:         currentDevice = dpct::get_current_device_id(); \
 // CHECK-NEXT:     } \
 // CHECK-NEXT: } while (0)
 #define HANDLE_GPU_ERROR(err) \
@@ -1088,7 +1088,7 @@ void foo28(){
 //CHECK: void foo29(double red_acc[8][8/*BLOCK_PAIR / SIMD_SIZE*/]) {
 //CHECK-NEXT: }
 __global__ void foo29() {
-  local_allocate_store_charge();
+  local_allocate_store_charge()
 }
 
 template<class T1, class T2, int N> __global__ void foo31();
@@ -1332,7 +1332,7 @@ void foo38() {
   //CHECK-NEXT: sycl::nd_range<3>(sycl::range<3>(z, y, x) * sycl::range<3>(1, 1, block),
   //CHECK-NEXT:                   sycl::range<3>(1, 1, block)),
   //CHECK-NEXT: [=](sycl::nd_item<3> item_ct1) {
-  //CHECK-NEXT:   ((void *)&kernel38<T>)();
+  //CHECK-NEXT:   kernel38<T>();
   //CHECK-NEXT: });
   //CHECK-NEXT: return 0;
   //CHECK-NEXT: }());
@@ -1342,7 +1342,7 @@ void foo38() {
   //CHECK-NEXT:       sycl::nd_range<3>(sycl::range<3>(z, y, x) * sycl::range<3>(1, 1, block),
   //CHECK-NEXT:                         sycl::range<3>(1, 1, block)),
   //CHECK-NEXT:       [=](sycl::nd_item<3> item_ct1) {
-  //CHECK-NEXT:         ((void *)&kernel38<T>)();
+  //CHECK-NEXT:         kernel38<T>();
   //CHECK-NEXT:       });
   //CHECK-NEXT:   return 0;
   //CHECK-NEXT: }();
@@ -1383,4 +1383,141 @@ int foo39() {
   CALL(0, 1)
   return 0;
 }
+
+//CHECK: void foo40_kernel(const sycl::stream &stream_ct1) {
+//CHECK-NEXT:   FOO40_MACRO;
+//CHECK-NEXT: }
+__global__ void foo40_kernel() {
+  FOO40_MACRO;
+}
+void foo40() {
+  foo40_kernel<<<1, 1>>>();
+}
+
+
+template <class T> class MyClass {};
+
+__global__ void foo41(MyClass<float> m) {}
+
+void foo42(MyClass<float> &vecs) {
+#define RUN_APPEND2(DATA) foo41<<<1, 1, 0>>>(DATA);
+//CHECK: #define RUN_APPEND2(DATA)                                                      \
+//CHECK-NEXT:   dpct::get_in_order_queue().submit([&](sycl::handler &cgh) {                  \
+//CHECK-NEXT:     auto DATA_ct0 = DATA;                                                      \
+//CHECK-NEXT:                                                                                \
+//CHECK-NEXT:     cgh.parallel_for(                                                          \
+//CHECK-NEXT:         sycl::nd_range<3>(sycl::range<3>(1, 1, 1), sycl::range<3>(1, 1, 1)),   \
+//CHECK-NEXT:         [=](sycl::nd_item<3> item_ct1) { foo41(DATA_ct0); });                  \
+//CHECK-NEXT:   });
+  RUN_APPEND2(vecs);
+}
+
+//CHECK: /*
+//CHECK-NEXT: DPCT1064:{{[0-9]+}}: Migrated cudaMemcpy call is used in a macro/template definition and
+//CHECK-NEXT: may not be valid for all macro/template uses. Adjust the code.
+//CHECK-NEXT: */
+//CHECK-NEXT: #define MEMCOPY(ptr_d, ptr_h)                                                  \
+//CHECK-NEXT:    dpct::get_in_order_queue().memcpy(ptr_d, ptr_h, sizeof(float)).wait();
+//CHECK-NEXT: #define THIS_DEFINE_NAME_IS_TOO_BIG(ptr_d, ptr_h) MEMCOPY(ptr_d, ptr_h)
+//CHECK-NEXT: #define TOO_SMALL(ptr_d, ptr_h) MEMCOPY(ptr_d, ptr_h)
+//CHECK-NEXT: #define JUST_RIGHT(ptr_d, ptr_h) MEMCOPY(ptr_d, ptr_h)
+#define MEMCOPY(ptr_d, ptr_h) cudaMemcpy(ptr_d, ptr_h, sizeof(float), cudaMemcpyHostToDevice);
+#define THIS_DEFINE_NAME_IS_TOO_BIG(ptr_d, ptr_h) MEMCOPY(ptr_d, ptr_h)
+#define TOO_SMALL(ptr_d, ptr_h) MEMCOPY(ptr_d, ptr_h)
+#define JUST_RIGHT(ptr_d, ptr_h) MEMCOPY(ptr_d, ptr_h)
+
+void foo43() {
+  float *ptr_d = (float*) malloc (sizeof(float));
+  float *ptr_h;
+  cudaMalloc((void**)&ptr_h, sizeof(float));
+
+  //CHECK: THIS_DEFINE_NAME_IS_TOO_BIG(ptr_d, ptr_h) ;
+  //CHECK-NEXT: TOO_SMALL(ptr_d, ptr_h) ;
+  //CHECK-NEXT: JUST_RIGHT(ptr_d, ptr_h) ;
+  THIS_DEFINE_NAME_IS_TOO_BIG(ptr_d, ptr_h) ;
+  TOO_SMALL(ptr_d, ptr_h) ;
+  JUST_RIGHT(ptr_d, ptr_h) ;
+}
+
+#undef MEMCOPY
+#undef THIS_DEFINE_NAME_IS_TOO_BIG
+#undef TOO_SMALL
+#undef JUST_RIGHT
+
+//     CHECK: #define TODEV(A, s)                                                            \
+//CHECK-NEXT:   A = (float *)malloc((s) * sizeof(float));                                    \
+//CHECK-NEXT:     for (int i = 0; i < s; i++) A[i] = 0.001;                                  \
+//CHECK-NEXT:   float *A##_d;                                                                \
+//CHECK-NEXT:   A##_d = sycl::malloc_device<float>(((s)), dpct::get_in_order_queue());       \
+//CHECK-NEXT:   dpct::get_in_order_queue().memcpy(A##_d, A, (s) * sizeof(float)).wait();
+# define TODEV(A,s) A = (float*) malloc ((s) * sizeof(float)); \
+                    for (int i = 0; i < s; i++) A[i] = 0.001; \
+                    float *A##_d;\
+                    cudaMalloc((void**)&A##_d,((s))*sizeof(float));\
+                    cudaMemcpy(A##_d, A, (s)*sizeof(float), cudaMemcpyHostToDevice);
+
+//     CHECK: #define FROMDEV(A, s)                                                          \
+//CHECK-NEXT:   dpct::get_in_order_queue().memcpy(A, A##_d, (s) * sizeof(float)).wait();
+# define FROMDEV(A,s) cudaMemcpy(A, A##_d, (s)*sizeof(float), cudaMemcpyDeviceToHost);
+
+//     CHECK: #define FREE(A)                                                                \
+//CHECK-NEXT:   free(A);                                                                     \
+//CHECK-NEXT:   dpct::dpct_free(A##_d, q_ct1)
+# define FREE(A) free(A);\
+                 cudaFree(A##_d)
+
+//     CHECK: # define TODEV3(A) TODEV(A,d3)
+//CHECK-NEXT: # define TODEV2(A) TODEV(A,d2)
+//CHECK-NEXT: # define FROMDEV3(A) FROMDEV(A,d3)
+//CHECK-NEXT: # define FROMDEV2(A) FROMDEV(A,d2)
+# define TODEV3(A) TODEV(A,d3)
+# define TODEV2(A) TODEV(A,d2)
+# define FROMDEV3(A) FROMDEV(A,d3)
+# define FROMDEV2(A) FROMDEV(A,d2)
+
+//     CHECK: void foo44(float *x, int size, int d3, int d2) {
+//CHECK-NEXT:   dpct::device_ext &dev_ct1 = dpct::get_current_device();
+//CHECK-NEXT:   sycl::queue &q_ct1 = dev_ct1.in_order_queue();
+//CHECK-NEXT:   TODEV(x, size)
+//CHECK-NEXT:   FROMDEV(x, size)
+//CHECK-NEXT:   FREE(x);
+//CHECK-NEXT:   {
+//CHECK-NEXT:     TODEV3(x)
+//CHECK-NEXT:   }
+//CHECK-NEXT:   {
+//CHECK-NEXT:     TODEV2(x)
+//CHECK-NEXT:   }
+//CHECK-NEXT:   FROMDEV3(x)
+//CHECK-NEXT:   FROMDEV2(x)
+//CHECK-NEXT: }
+void foo44(float *x, int size, int d3, int d2) {
+  TODEV(x, size)
+  FROMDEV(x, size)
+  FREE(x);
+  {
+    TODEV3(x)
+  }
+  {
+    TODEV2(x)
+  }
+  FROMDEV3(x)
+  FROMDEV2(x)
+}
+
+template<typename T>
+void foo45(){}
+
+#define EXPLICIT_DECL(T) template void foo45<T>()
+
+// CHECK: extern EXPLICIT_DECL(sycl::half);
+extern EXPLICIT_DECL(half);
+
+#undef TODEV
+#undef FROMDEV
+#undef FREE
+#undef TODEV3
+#undef TODEV2
+#undef FROMDEV3
+#undef FROMDEV2
+
 #endif

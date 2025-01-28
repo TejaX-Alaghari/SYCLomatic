@@ -56,14 +56,17 @@ Migration rules are specified in YAML files. A single rule file may contain mult
      - Required. Specifies the priority of the rule: ``Takeover`` > ``Default`` > ``Fallback``.
        When there are rule conflicts, the rule with higher priority will take precedence.
    * - Kind
-     - ``Macro`` | ``API`` | ``Header`` | ``Type`` | ``Class`` | ``Enum`` | ``DisableAPIMigration`` | ``PatternRewriter`` | ``CMakeRule``
+     - ``Macro`` | ``API`` | ``Header`` | ``Type`` | ``Class`` | ``Enum`` | ``DisableAPIMigration`` | ``PatternRewriter`` | ``CMakeRule`` | ``PythonRule``
      - Required. Specifies the rule type.
    * - CmakeSyntax
      - String value
      - Required. Specify the CMake syntax name that will be migrated. Use the unique name for the CMake syntax.
+   * - PythonSyntax
+     - String value
+     - Optional. Specify the Python syntax name that will be migrated. Use the unique name for the Python syntax.
    * - MatchMode
-     - ``Partial`` | ``Full``
-     - Required. Specify the match mode with full word match or partial word match. If not specified, partial match mode will be used.
+     - ``Partial`` | ``Full`` | ``StrictFull``
+     - Optional. Specify the match mode with full word match, strict full word match, or partial word match. If not specified, partial match mode will be used. The partial matching mode means the matched string can be surrounded by arbitrary characters including whitespace. The full matching mode means the matched string should not be surrounded by identifier characters (letters, numbers, and underscore). The strict matching mode means the matched string should only be surrounded by whitespace characters.
    * - In
      - String value
      - Required. Specifies the target name in the input source code.
@@ -256,3 +259,25 @@ output source code:
 
    int *ptr, *ptr2;
    int * new_ptr = bar(*ptr, 30);
+
+
+More Examples and Rule Templates
+--------------------------------------------------------
+
+A set of rule examples that can be used as templates to implement new rules are 
+available in the *extensions/rule_templates* folder on the installation path of
+the tool.
+
+.. code-block:: bash
+
+   extensions
+   ├── rule_templates
+       ├── api_rule.yaml
+       ├── class_rule.yaml
+       ├── disable_rule.yaml
+       ├── enum_rule.yaml
+       ├── header_rule.yaml
+       ├── helper_function_rule.yaml
+       ├── macro_rule.yaml
+       ├── pattern_rewrite_rule.yaml
+       └── type_rule.yaml

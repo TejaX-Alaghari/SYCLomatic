@@ -11,7 +11,7 @@ set(LLVM_LINK_COMPONENTS
   )
 
 add_clang_tool(dpct-binary
-  DPCT.cpp NO_INSTALL_RPATH
+  DPCTMain.cpp NO_INSTALL_RPATH
   )
 set_target_properties(dpct-binary PROPERTIES OUTPUT_NAME "dpct")
 include_directories(
@@ -61,8 +61,7 @@ if (NOT CMAKE_CONFIGURATION_TYPES)
                              COMPONENT dpct-setvars)
 endif()
 
-add_subdirectory(DpctOptRules)
-add_subdirectory(RuleTemplates)
+add_subdirectory(extensions)
 
 set(dpct_cmake_helper_file
   ${CMAKE_SOURCE_DIR}/../clang/tools/dpct/cmake/dpct.cmake
