@@ -3047,8 +3047,10 @@ MemVarInfo::MemVarInfo(unsigned Offset,
   }
   if (Var->hasInit())
     setInitList(Var->getInit(), Var);
-  if (Var->getStorageClass() == SC_Static || getScope() == Global) {
+  if (Var->getStorageClass() == SC_Static) {
     IsStatic = true;
+  } else if (getScope() == Global) {
+    IsInline = true;
   }
 
   if (auto Func = Var->getParentFunctionOrMethod()) {
@@ -3204,8 +3206,8 @@ std::string MemVarInfo::getInitStmt(StringRef QueueString) {
   return buildString(getConstVarName(), ".init(", QueueString, ");");
 }
 std::string MemVarInfo::getMemoryDecl(const std::string &MemSize) {
-  return buildString(isStatic() ? "static " : "", getMemoryType(), " ",
-                     getConstVarName(),
+  return buildString(isStatic() ? "static " : "", isInline() ? "inline " : "",
+                     getMemoryType(), " ", getConstVarName(),
                      PointerAsArray ? "" : getInitArguments(MemSize), ";");
 }
 std::string MemVarInfo::getMemoryDecl() {
@@ -4425,7 +4427,7 @@ void CallFunctionExpr::buildCallExprInfo(const CallExpr *CE) {
     } else {
       // if some params have default value, set ExtraArgLoc to the location
       // before the comma
-      if (CE->getNumArgs() > Info->NonDefaultParamNum - 1) {
+      if (CE->getNumArgs() > Info->NonDefaultParamNum - 1 + HasImplicitArg) {
         auto &SM = DpctGlobalInfo::getSourceManager();
         auto CERange = getDefinitionRange(CE->getBeginLoc(), CE->getEndLoc());
         auto TempLoc = Lexer::getLocForEndOfToken(
@@ -4614,7 +4616,7 @@ void CallFunctionExpr::buildCalleeInfo(const Expr *Callee,
           !DpctGlobalInfo::isInAnalysisScope(CallDecl->getBeginLoc()) ||
           DRE->getQualifier() || CallDecl->isOverloadedOperator())
         return;
-      for (unsigned i = 0; i < NumArgs; i++) {
+      for (unsigned i = 0; i < CallDecl->getNumParams(); i++) {
         auto Type = CallDecl->getParamDecl(i)
                         ->getOriginalType()
                         .getCanonicalType()
@@ -5775,7 +5777,7 @@ void KernelCallExpr::printSubmit(KernelPrinter &Printer) {
             RequiredSubGroupSize.isEvaluated = false;
             RequiredSubGroupSize.SizeStr = std::get<4>(Element);
             ExecutionConfig.SubGroupSize =
-                " [[intel::reqd_sub_group_size(dpct_placeholder)]]";
+                " [[sycl::reqd_sub_group_size(dpct_placeholder)]]";
             SubGroupSizeWarning =
                 DiagnosticsUtils::getWarningTextAndUpdateUniqueID(
                     Diagnostics::SUBGROUP_SIZE_NOT_EVALUATED,
@@ -5783,7 +5785,7 @@ void KernelCallExpr::printSubmit(KernelPrinter &Printer) {
           } else {
             RequiredSubGroupSize.Size = Size;
             ExecutionConfig.SubGroupSize =
-                " [[intel::reqd_sub_group_size(" + std::to_string(Size) + ")]]";
+                " [[sycl::reqd_sub_group_size(" + std::to_string(Size) + ")]]";
           }
         } else {
           bool isNeedEmitWarning = true;
@@ -6665,8 +6667,25 @@ KernelPrinter &KernelCallExpr::SubmitStmtsList::print(KernelPrinter &Printer) {
       Printer.line("cgh.depends_on(dpct::get_current_device().get_in_order_"
                    "queues_last_events());");
     } else {
-      Printer.line("cgh.depends_on(dpct::get_default_queue().ext_oneapi_get_"
-                   "last_event());");
+      Printer.line("auto last_event = "
+                   "dpct::get_default_queue().ext_oneapi_get_last_event();");
+      Printer.line("[&](auto &&_e) {");
+      {
+        Printer.indent();
+        Printer.line("if constexpr "
+                     "(std::is_same_v<std::remove_reference_t<decltype(last_"
+                     "event)>, sycl::event>)");
+        {
+          Printer.indent();
+          Printer.line("cgh.depends_on(_e);");
+        }
+        Printer.line("else if (_e.has_value())");
+        {
+          Printer.indent();
+          Printer.line("cgh.depends_on(_e.value());");
+        }
+      }
+      Printer.line("}(last_event);");
     }
     Printer.newLine();
   }

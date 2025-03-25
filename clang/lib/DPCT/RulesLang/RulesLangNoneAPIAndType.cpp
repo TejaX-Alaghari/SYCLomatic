@@ -21,7 +21,6 @@
 #include "clang/AST/TypeLoc.h"
 #include "clang/ASTMatchers/ASTMatchers.h"
 #include "clang/Analysis/AnalysisDeclContext.h"
-#include "clang/Analysis/CallGraph.h"
 #include "clang/Basic/Cuda.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Lex/MacroArgs.h"
@@ -531,7 +530,7 @@ bool ConstantMemVarMigrationRule::currentIsDevice(
       auto SourceFileType = GetSourceFileType(Info->getFilePath());
       if ((SourceFileType == SPT_CudaHeader ||
            SourceFileType == SPT_CppHeader) &&
-          !Info->isStatic()) {
+          !Info->isStatic() && !Info->isInline()) {
         ReplaceStr = "inline " + ReplaceStr;
       }
       auto RVD =

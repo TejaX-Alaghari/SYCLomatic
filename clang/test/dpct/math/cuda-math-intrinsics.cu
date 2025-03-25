@@ -24,8 +24,8 @@ using namespace std;
 using ::max;
 // BBB
 
-// CHECK: static dpct::constant_memory<double, 0> d;
-// CHECK-NEXT: static dpct::constant_memory<double, 0> d2;
+// CHECK: inline dpct::constant_memory<double, 0> d;
+// CHECK-NEXT: inline dpct::constant_memory<double, 0> d2;
 __constant__ double d;
 __constant__ double d2;
 
@@ -50,7 +50,7 @@ __device__ double test3(double d4, double d5) {
   return max(d4, d5);
 }
 
-// CHECK: static dpct::constant_memory<float, 0> C;
+// CHECK: inline dpct::constant_memory<float, 0> C;
 // CHECK-NEXT:  int foo(int n, float C) {
 // CHECK-NEXT:   return n == 1 ? C : 0;
 // CHECK-NEXT: }
@@ -241,7 +241,7 @@ __global__ void kernelFuncHalf(double *deviceArrayDouble) {
   h2_2 = h2log10(h2);
   // CHECK: h2_2 = sycl::log2(h2);
   h2_2 = h2log2(h2);
-  // CHECK: h2_2 = sycl::half2(sycl::half_precision::recip(float(h2[0])), sycl::half_precision::recip(float(h2[1])));
+  // CHECK: h2_2 = sycl::half2(sycl::half_precision::recip(float(h2.x())), sycl::half_precision::recip(float(h2.y())));
   h2_2 = h2rcp(h2);
   // CHECK: h2_2 = sycl::rint(h2);
   h2_2 = h2rint(h2);
@@ -3529,3 +3529,24 @@ void foo5() {
   // CHECK: f0 = ceilf(i);
   f0 = ceilf(i);
 }
+
+void foo6(float aa) {
+  // CHECK: sycl::sinpi(aa);
+  ::sinpif(aa);
+}
+
+__global__ void foo7(float aa) {
+  // CHECK: sycl::sinpi(aa);
+  ::sinpif(aa);
+}
+
+void foo8(float aa) {
+  // CHECK: sycl::cospi(aa);
+  ::cospif(aa);
+}
+
+__global__ void foo9(float aa) {
+  // CHECK: sycl::cospi(aa);
+  ::cospif(aa);
+}
+

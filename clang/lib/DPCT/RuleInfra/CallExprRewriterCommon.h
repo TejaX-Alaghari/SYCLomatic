@@ -145,11 +145,42 @@ public:
       : TypeInfo(std::forward<std::string>(T)),
         SubExpr(std::forward<SubExprT>(S)) {}
   template <class StreamT> void print(StreamT &Stream) const {
-    const Expr *InputArg = SubExpr->IgnoreImpCasts();
+    const Expr *InputArg = SubExpr->IgnoreUnlessSpelledInSource();
     clang::QualType ArgType = InputArg->getType().getCanonicalType();
     ArgType.removeLocalFastQualifiers(clang::Qualifiers::CVRMask);
     if (ArgType.getAsString() != TypeInfo) {
       Stream << "(" << TypeInfo << ")";
+    }
+    dpct::print(Stream, SubExpr);
+  }
+};
+
+template <typename SubExprT> class CastIfNotSameAsGivenTypeExprPrinter {
+  std::string GivenTypeName;
+  std::string ReplacementTypeName;
+  SubExprT SubExpr;
+
+public:
+  CastIfNotSameAsGivenTypeExprPrinter(std::string &&G, std::string &&R,
+                                      SubExprT &&S)
+      : GivenTypeName(std::forward<std::string>(G)),
+        ReplacementTypeName(std::forward<std::string>(R)),
+        SubExpr(std::forward<SubExprT>(S)) {}
+  template <typename StreamT> void print(StreamT &Stream) const {
+    if (!SubExpr)
+      return;
+
+    const Expr *CleanSubExpr = SubExpr->IgnoreUnlessSpelledInSource();
+
+    if (const Type *SubExprType = CleanSubExpr->getType().getTypePtr()) {
+      if (const NamedDecl *TypeName = getNamedDecl(SubExprType)) {
+        if (TypeName->getNameAsString() != GivenTypeName) {
+          Stream << "reinterpret_cast<" << ReplacementTypeName << ">(";
+          dpct::print(Stream, SubExpr);
+          Stream << ")";
+          return;
+        }
+      }
     }
     dpct::print(Stream, SubExpr);
   }
@@ -692,6 +723,20 @@ makeCastIfNotSameExprCreator(
                         std::function<std::string(const CallExpr *)>,
                         std::function<SubExprT(const CallExpr *)>>(TypeInfo,
                                                                    Sub);
+}
+
+template <class SubExprT>
+inline std::function<
+    CastIfNotSameAsGivenTypeExprPrinter<SubExprT>(const CallExpr *)>
+makeCastIfNotSameAsGivenExprCreator(
+    std::function<std::string(const CallExpr *)> GivenTypeName,
+    std::function<std::string(const CallExpr *)> ReplacementTypeName,
+    std::function<SubExprT(const CallExpr *)> Sub) {
+  return PrinterCreator<CastIfNotSameAsGivenTypeExprPrinter<SubExprT>,
+                        std::function<std::string(const CallExpr *)>,
+                        std::function<std::string(const CallExpr *)>,
+                        std::function<SubExprT(const CallExpr *)>>(
+      std::move(GivenTypeName), std::move(ReplacementTypeName), std::move(Sub));
 }
 
 inline std::function<CastIfSpecialExpr(const CallExpr *)>
@@ -2129,6 +2174,8 @@ const std::string MipmapNeedBindlessImage =
 #define ARRAY_SUBSCRIPT(e, i) makeArraySubscriptExprCreator(e, i)
 #define CAST(T, S) makeCastExprCreator(T, S)
 #define CAST_IF_NOT_SAME(T, S) makeCastIfNotSameExprCreator(T, S)
+#define CAST_IF_NOT_SAME_AS_GIVEN(G, R, S)                                     \
+  makeCastIfNotSameAsGivenExprCreator(G, R, S)
 #define CAST_IF_SPECIAL(Idx) CastIfSpecialExprCreator(Idx)
 #define DOUBLE_POINTER_CONST_CAST(BASE_VALUE_TYPE, EXPR,                       \
                                   DOES_BASE_VALUE_NEED_CONST,                  \
@@ -2138,7 +2185,7 @@ const std::string MipmapNeedBindlessImage =
                                         DOES_FIRST_LEVEL_POINTER_NEED_CONST)
 #define NEW(...) makeNewDeleteExprCreator(true, __VA_ARGS__)
 #define DELETE(...) makeNewDeleteExprCreator(false, __VA_ARGS__)
-#define DECL(TYPE, VAR, ...) makeDeclCreator(TYPE, VAR, __VA_ARGS__)
+#define DECLARE(TYPE, VAR, ...) makeDeclCreator(TYPE, VAR, __VA_ARGS__)
 #define TYPENAME(SUBEXPR) makeTypenameExprCreator(SUBEXPR)
 #define ZERO_INITIALIZER(SUBEXPR) makeZeroInitializerCreator(SUBEXPR)
 #define SUBGROUP                                                               \

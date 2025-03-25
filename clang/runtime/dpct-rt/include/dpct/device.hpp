@@ -592,7 +592,15 @@ public:
     lock.unlock();
     for (const auto &q : current_queues) {
       if (q->is_in_order()) {
-        last_events.push_back(q->ext_oneapi_get_last_event());
+        auto last_event = q->ext_oneapi_get_last_event();
+        [&](auto &&_e) {
+          if constexpr (std::is_same_v<
+                            std::remove_reference_t<decltype(last_event)>,
+                            sycl::event>)
+            last_events.push_back(_e);
+          else if (_e.has_value())
+            last_events.push_back(_e.value());
+        }(last_event);
       }
     }
     // Guard the destruct of current_queues to make sure the ref count is safe.
